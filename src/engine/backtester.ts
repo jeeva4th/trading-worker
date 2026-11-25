@@ -1,4 +1,4 @@
-import { Strategy, Candle, Position, TradeRecord, BacktestResult } from '../types';
+import { Strategy, Candle, Position, TradeRecord, BacktestResult, EquityPoint } from '../types';
 import { TechnicalIndicators } from '../indicators';
 
 export class BacktestEngine {
@@ -13,23 +13,29 @@ export class BacktestEngine {
     let balance = this.initialBalance;
     let peakBalance = this.initialBalance;
     let maxDrawdown = 0;
-    let position: (Position & { highestSinceEntry?: number }) | null = null;
+    let position: Position | null = null;
     const trades: TradeRecord[] = [];
+    const equityCurve: EquityPoint[] = [];
 
-    const atrValues = TechnicalIndicators.getATR(candles, 14);
+    const atrPeriod = 14;
+    const atrValues = TechnicalIndicators.getATR(candles, atrPeriod);
 
-    // Warm-up window of 50 candles for 200 EMA & indicators
+    // Warm-up window of up to 60 candles (or fewer if limited history)
     const warmUp = Math.min(60, Math.floor(candles.length / 4));
 
     for (let i = warmUp; i < candles.length; i++) {
       const slice = candles.slice(0, i + 1);
       const currentCandle = candles[i];
-      const currentAtr = atrValues[i] || (currentCandle.close * 0.02);
+      // ATR array is offset by atrPeriod entries from candle index 0
+      const atrIdx = i - atrPeriod;
+      const currentAtr = (atrIdx >= 0 && atrValues[atrIdx] !== undefined)
+        ? atrValues[atrIdx]
+        : (currentCandle.close * 0.02);
+
       const signal = this.strategy.analyze(slice);
 
       // 1. Manage Active Position
       if (position) {
-        // Update highest price seen since entry for trailing stop
         if (!position.highestSinceEntry || currentCandle.high > position.highestSinceEntry) {
           position.highestSinceEntry = currentCandle.high;
         }
@@ -44,20 +50,22 @@ export class BacktestEngine {
 
         let shouldExit = false;
         let exitReason = '';
+        let exitPrice = currentCandle.close;
 
         if (position.stopLoss && currentCandle.low <= position.stopLoss) {
           shouldExit = true;
           exitReason = 'Trailing Stop Hit';
+          exitPrice = Math.min(currentCandle.open, position.stopLoss);
         } else if (position.takeProfit && currentCandle.high >= position.takeProfit) {
           shouldExit = true;
           exitReason = 'Take Profit Target Reached';
+          exitPrice = Math.max(currentCandle.open, position.takeProfit);
         } else if (signal.type === 'SELL') {
           shouldExit = true;
           exitReason = signal.reason;
         }
 
         if (shouldExit) {
-          const exitPrice = currentCandle.close;
           const pnl = (exitPrice - position.entryPrice) * position.amount;
           const pnlPercent = ((exitPrice - position.entryPrice) / position.entryPrice) * 100;
 
@@ -82,12 +90,10 @@ export class BacktestEngine {
       // 2. Evaluate New Entry
       if (!position && signal.type === 'BUY') {
         const capitalToRisk = balance * (this.riskPerTradePercent / 100);
-        // Volatility-adjusted sizing
         const stopDistance = signal.stopLoss ? Math.abs(signal.price - signal.stopLoss) : (currentAtr * 2);
         const sharesToBuy = stopDistance > 0 ? capitalToRisk / stopDistance : 0;
         const totalCost = sharesToBuy * signal.price;
 
-        // Allocate up to 95% of available liquid cash
         const maxCapital = balance * 0.95;
         const allocatedCapital = Math.min(maxCapital, Math.max(balance * 0.25, totalCost));
         const amount = allocatedCapital / signal.price;
@@ -108,6 +114,8 @@ export class BacktestEngine {
 
       // 3. Track Equity Curve & Drawdown
       const currentEquity = balance + (position ? position.amount * currentCandle.close : 0);
+      equityCurve.push({ timestamp: currentCandle.timestamp, equity: Number(currentEquity.toFixed(2)) });
+
       if (currentEquity > peakBalance) peakBalance = currentEquity;
       const drawdown = ((peakBalance - currentEquity) / peakBalance) * 100;
       if (drawdown > maxDrawdown) maxDrawdown = drawdown;
@@ -151,7 +159,8 @@ export class BacktestEngine {
       winRate: trades.length === 0 ? 0 : (winning.length / trades.length) * 100,
       profitFactor: Number(profitFactor.toFixed(2)),
       maxDrawdownPercent: Number(maxDrawdown.toFixed(2)),
-      trades
+      trades,
+      equityCurve
     };
   }
 }

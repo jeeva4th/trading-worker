@@ -25,6 +25,7 @@ export interface Position {
   entryTime: number;
   stopLoss?: number;
   takeProfit?: number;
+  highestSinceEntry?: number;
 }
 
 export interface TradeRecord {
@@ -37,6 +38,11 @@ export interface TradeRecord {
   pnlPercent: number;
   type: 'LONG';
   exitReason: string;
+}
+
+export interface EquityPoint {
+  timestamp: number;
+  equity: number;
 }
 
 export interface BacktestResult {
@@ -53,9 +59,12 @@ export interface BacktestResult {
   profitFactor: number;
   maxDrawdownPercent: number;
   trades: TradeRecord[];
+  equityCurve: EquityPoint[];
 }
 
 export interface Strategy {
   name: string;
   analyze(candles: Candle[]): TradeSignal;
 }
+
+export type StrategyId = 'adaptive' | 'trend' | 'reversion';

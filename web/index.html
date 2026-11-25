@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Worker — TradingView Quant Terminal</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-title">TRADING WORKER</span>
+      <span class="brand-sub">Quant + TradingView</span>
+    </div>
+
+    <div class="controls">
+      <div class="control-group">
+        <label for="symbol-select">Pair</label>
+        <select id="symbol-select">
+          <option value="BTC/USDT" selected>BTC/USDT</option>
+          <option value="ETH/USDT">ETH/USDT</option>
+          <option value="SOL/USDT">SOL/USDT</option>
+          <option value="BNB/USDT">BNB/USDT</option>
+          <option value="XRP/USDT">XRP/USDT</option>
+          <option value="DOGE/USDT">DOGE/USDT</option>
+        </select>
+      </div>
+
+      <div class="timeframe-pills" id="timeframe-pills">
+        <button class="pill" data-tf="5m">5m</button>
+        <button class="pill" data-tf="15m">15m</button>
+        <button class="pill active" data-tf="1h">1h</button>
+        <button class="pill" data-tf="4h">4h</button>
+        <button class="pill" data-tf="1d">1d</button>
+      </div>
+
+      <div class="control-group">
+        <label for="strategy-select">Strategy</label>
+        <select id="strategy-select">
+          <option value="adaptive" selected>Adaptive Regime (ADX + 200 EMA)</option>
+          <option value="trend">EMA Trend Following + RSI</option>
+          <option value="reversion">Bollinger Bands + RSI Reversion</option>
+        </select>
+      </div>
+
+      <div class="view-tabs">
+        <button id="tab-strategy-chart" class="tab-btn active">Strategy Overlay</button>
+        <button id="tab-tv-widget" class="tab-btn">TradingView Pro</button>
+      </div>
+
+      <button id="btn-run-backtest" class="btn btn-primary">Run Backtest</button>
+      <button id="btn-refresh" class="btn btn-ghost" title="Refresh market data">↻</button>
+    </div>
+  </header>
+
+  <section class="telemetry-strip">
+    <div class="metric-box">
+      <span class="metric-label" id="metric-symbol">BTC/USDT</span>
+      <span class="metric-value price" id="metric-price">—</span>
+      <span class="metric-sub" id="metric-change">—</span>
+    </div>
+    <div class="metric-box">
+      <span class="metric-label">Market Regime</span>
+      <span class="regime-badge" id="metric-regime">LOADING...</span>
+      <span class="metric-sub" id="metric-adx">ADX: —</span>
+    </div>
+    <div class="metric-box">
+      <span class="metric-label">RSI (14) / ATR (14)</span>
+      <span class="metric-value" id="metric-rsi">—</span>
+      <span class="metric-sub" id="metric-atr">ATR: —</span>
+    </div>
+    <div class="metric-box wide">
+      <span class="metric-label">Live Strategy Signal</span>
+      <span class="signal-pill hold" id="metric-signal">HOLD</span>
+      <span class="metric-sub truncate" id="metric-signal-reason">Analyzing candles...</span>
+    </div>
+    <div class="metric-box">
+      <span class="metric-label">Worker Equity</span>
+      <span class="metric-value" id="metric-equity">$10,000.00</span>
+      <span class="metric-sub" id="metric-unrealized">Unrealized: $0.00</span>
+    </div>
+  </section>
+
+  <main class="workspace">
+    <section class="charts-column">
+      <div class="chart-card" id="strategy-chart-panel">
+        <div class="chart-header">
+          <div class="legend">
+            <span class="leg-item"><i class="dot ema9"></i>EMA 9</span>
+            <span class="leg-item"><i class="dot ema21"></i>EMA 21</span>
+            <span class="leg-item"><i class="dot ema200"></i>EMA 200</span>
+            <span class="leg-item"><i class="dot buy"></i>BUY Marker</span>
+            <span class="leg-item"><i class="dot sell"></i>SELL Marker</span>
+          </div>
+          <span class="chart-status" id="chart-status">Ready</span>
+        </div>
+        <div id="tv-lightweight-chart" class="chart-container"></div>
+        <div class="equity-header">
+          <span>Backtest Equity Curve ($)</span>
+          <span id="equity-summary">—</span>
+        </div>
+        <div id="equity-chart" class="equity-container"></div>
+      </div>
+
+      <div class="chart-card hidden" id="tv-widget-panel">
+        <div id="tradingview_pro_widget" class="tv-pro-container"></div>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <!-- Paper Trading Worker Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Paper Trading Worker</h2>
+          <span class="worker-status-dot" id="worker-badge">STOPPED</span>
+        </div>
+        <div class="worker-actions">
+          <button id="btn-worker-start" class="btn btn-success">▶ Start Worker</button>
+          <button id="btn-worker-stop" class="btn btn-danger" disabled>■ Stop</button>
+          <button id="btn-worker-tick" class="btn btn-ghost">Tick Now</button>
+          <button id="btn-worker-reset" class="btn btn-ghost">Reset</button>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat">
+            <span>Cash Balance</span>
+            <strong id="worker-cash">$10,000.00</strong>
+          </div>
+          <div class="stat">
+            <span>Total Equity</span>
+            <strong id="worker-equity">$10,000.00</strong>
+          </div>
+        </div>
+
+        <div class="position-box" id="position-box">
+          <div class="pos-empty">No open position (Cash Protected / Flat)</div>
+        </div>
+
+        <div class="panel-subheader">Worker Execution Log</div>
+        <div class="log-list" id="worker-logs"></div>
+      </div>
+
+      <!-- Backtest Summary Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Backtest Performance</h2>
+          <span class="metric-sub" id="bt-candles">500 candles</span>
+        </div>
+        <div class="stats-grid four">
+          <div class="stat">
+            <span>Return</span>
+            <strong id="bt-return">—</strong>
+          </div>
+          <div class="stat">
+            <span>Win Rate</span>
+            <strong id="bt-winrate">—</strong>
+          </div>
+          <div class="stat">
+            <span>Profit Factor</span>
+            <strong id="bt-pf">—</strong>
+          </div>
+          <div class="stat">
+            <span>Max Drawdown</span>
+            <strong id="bt-dd">—</strong>
+          </div>
+        </div>
+
+        <div class="panel-subheader">Simulated Trades (<span id="bt-trade-count">0</span>)</div>
+        <div class="trades-list" id="bt-trades"></div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

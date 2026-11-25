@@ -1,15 +1,22 @@
 import Table from 'cli-table3';
 import { ExchangeConnector } from './connectors/exchange';
-import { TrendFollowingStrategy } from './strategies/trendFollowing';
-import { MeanReversionStrategy } from './strategies/meanReversion';
-import { AdaptiveRegimeStrategy } from './strategies/adaptiveRegimeStrategy';
+import { createStrategy, STRATEGY_CATALOG } from './strategies';
 import { BacktestEngine } from './engine/backtester';
+import { PaperTrader } from './engine/paperTrader';
+import { startServer } from './server';
+import { StrategyId } from './types';
 
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'backtest';
   const symbol = args[1] || 'BTC/USDT';
   const timeframe = args[2] || '1h';
+  const strategyArg = (args[3] || 'adaptive') as StrategyId;
+
+  if (command === 'web' || command === 'ui' || command === 'server') {
+    startServer();
+    return;
+  }
 
   const exchange = new ExchangeConnector('binance');
 
@@ -28,16 +35,26 @@ async function main() {
     return;
   }
 
+  if (command === 'paper') {
+    console.log(`🤖 Starting Live Paper Trading Worker (${strategyArg})...`);
+    const trader = new PaperTrader('binance');
+    await trader.start({ symbol, timeframe, strategyId: strategyArg, pollIntervalMs: 15000 });
+    setInterval(() => {
+      const state = trader.getState();
+      const latestLog = state.logs[0];
+      console.log(
+        `[${new Date().toLocaleTimeString()}] Equity: $${state.equity.toFixed(2)} | Price: $${state.lastPrice.toFixed(2)} | ${latestLog?.message || ''}`
+      );
+    }, 15000);
+    return;
+  }
+
   if (command === 'backtest' || command === 'test') {
     console.log(`📥 Downloading historical ${timeframe} candles from Binance...`);
     const candles = await exchange.fetchCandles(symbol, timeframe, 500);
     console.log(`Loaded ${candles.length} historical candles.\n`);
 
-    const strategies = [
-      new TrendFollowingStrategy(9, 21, 14),
-      new MeanReversionStrategy(20, 2, 14),
-      new AdaptiveRegimeStrategy(14, 200, 9, 21)
-    ];
+    const strategies = STRATEGY_CATALOG.map(meta => createStrategy(meta.id));
 
     const resultsTable = new Table({
       head: ['Strategy Engine', 'Initial $', 'Final $', 'PnL ($)', 'Return (%)', 'Trades', 'Win Rate', 'Profit Factor', 'Max DD'],
@@ -63,7 +80,6 @@ async function main() {
 
     console.log(resultsTable.toString());
 
-    // Print latest real-time signal and market regime
     console.log(`\n📊 Real-Time Market Analysis (Price: $${candles[candles.length - 1].close.toLocaleString()}):`);
     for (const strat of strategies) {
       const signal = strat.analyze(candles);
