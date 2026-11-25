@@ -90,6 +90,9 @@ function clearPriceLines() {
 }
 
 function toTvSymbol(pair) {
+  if (pair === 'XAU/USD' || pair === 'XAUUSD') {
+    return 'OANDA:XAUUSD';
+  }
   return 'BINANCE:' + pair.replace('/', '');
 }
 
@@ -485,10 +488,30 @@ function bindEvents() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  const params = new URLSearchParams(window.location.search);
+  const urlSymbol = params.get('symbol');
+  const urlTab = params.get('tab');
+  if (urlSymbol) {
+    state.symbol = urlSymbol;
+    const selectEl = document.getElementById('symbol-select');
+    if (![...selectEl.options].some(o => o.value === state.symbol)) {
+      const opt = document.createElement('option');
+      opt.value = state.symbol;
+      opt.textContent = state.symbol;
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = state.symbol;
+  }
+
   initCharts();
   bindEvents();
   await loadMarket();
   await runBacktest();
   await refreshWorkerStatus();
+
+  if (urlTab === 'tv') {
+    document.getElementById('tab-tv-widget').click();
+  }
+
   setInterval(refreshWorkerStatus, 5000);
 });

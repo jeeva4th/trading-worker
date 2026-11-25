@@ -10,8 +10,12 @@ const KNOWN_QUOTES = ['USDT', 'USDC', 'BUSD', 'BTC', 'ETH', 'BNB', 'EUR', 'USD']
 export function normalizeSymbolPair(rawPair: string): string {
   const cleaned = rawPair.trim().toUpperCase().replace(/[^A-Z0-9/:_-]/g, '');
 
-  // Strip exchange prefix like BINANCE:BTCUSDT
+  // Strip exchange prefix like BINANCE:BTCUSDT or OANDA:XAUUSD
   const withoutExchange = cleaned.includes(':') ? cleaned.split(':').pop() || cleaned : cleaned;
+
+  if (['XAUUSD', 'XAU/USD', 'XAUUSDT', 'XAU/USDT', 'GOLD'].includes(withoutExchange)) {
+    return 'XAU/USD';
+  }
 
   if (withoutExchange.includes('/')) {
     return withoutExchange;
