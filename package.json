@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "ts-node src/server.ts",
     "web": "ts-node src/server.ts",
+    "analyze": "ts-node src/cli.ts analyze",
     "backtest": "ts-node src/cli.ts backtest",
     "paper": "ts-node src/cli.ts paper",
     "market": "ts-node src/cli.ts market",

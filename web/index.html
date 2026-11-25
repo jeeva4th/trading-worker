@@ -17,6 +17,11 @@
     </div>
 
     <div class="controls">
+      <div class="tv-url-bar">
+        <input id="tv-url-input" type="text" placeholder="Paste TradingView URL or Symbol (e.g. BINANCE:SOLUSDT)" />
+        <button id="btn-tv-analyze" class="btn btn-primary">Analyze URL</button>
+      </div>
+
       <div class="control-group">
         <label for="symbol-select">Pair</label>
         <select id="symbol-select">
@@ -141,6 +146,22 @@
 
         <div class="panel-subheader">Worker Execution Log</div>
         <div class="log-list" id="worker-logs"></div>
+      </div>
+
+      <!-- TradingView Webhook Bridge Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>TradingView Bridge</h2>
+          <span class="worker-status-dot running">WEBHOOK READY</span>
+        </div>
+        <div class="webhook-url-box">
+          <span class="metric-label">Webhook Endpoint (POST)</span>
+          <code id="webhook-url">http://localhost:3000/api/webhook/tradingview</code>
+        </div>
+        <div class="worker-actions">
+          <button id="btn-sim-tv-buy" class="btn btn-success">Sim TV BUY</button>
+          <button id="btn-sim-tv-sell" class="btn btn-danger">Sim TV SELL</button>
+        </div>
       </div>
 
       <!-- Backtest Summary Card -->

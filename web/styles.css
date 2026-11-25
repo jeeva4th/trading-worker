@@ -88,7 +88,7 @@ body {
   text-transform: uppercase;
 }
 
-select {
+select, input[type="text"] {
   background: var(--bg-elevated);
   color: var(--text-main);
   border: 1px solid var(--border);
@@ -96,7 +96,36 @@ select {
   padding: 6px 10px;
   font-size: 12px;
   outline: none;
+}
+
+select {
   cursor: pointer;
+}
+
+.tv-url-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tv-url-bar input {
+  width: 245px;
+}
+
+.webhook-url-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.webhook-url-box code {
+  font-size: 11px;
+  color: var(--cyan);
+  word-break: break-all;
 }
 
 .timeframe-pills, .view-tabs {

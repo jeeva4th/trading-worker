@@ -5,12 +5,15 @@ import { BacktestEngine } from './engine/backtester';
 import { PaperTrader } from './engine/paperTrader';
 import { startServer } from './server';
 import { StrategyId } from './types';
+import { parseTradingViewInput } from './utils/tradingviewParser';
 
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] || 'backtest';
-  const symbol = args[1] || 'BTC/USDT';
-  const timeframe = args[2] || '1h';
+  const rawInput = args[1] || 'BTC/USDT';
+  const parsed = parseTradingViewInput(rawInput);
+  const symbol = parsed.symbol;
+  const timeframe = args[2] || parsed.timeframe || '1h';
   const strategyArg = (args[3] || 'adaptive') as StrategyId;
 
   if (command === 'web' || command === 'ui' || command === 'server') {
@@ -24,6 +27,24 @@ async function main() {
   console.log(`🚀 Quantitative Trading Worker [High-Profit Engine]`);
   console.log(`Exchange: ${exchange.getExchangeName()} | Pair: ${symbol} | Timeframe: ${timeframe}`);
   console.log(`======================================================\n`);
+
+  if (command === 'analyze') {
+    const actionArg = (args[3] || 'ANALYZE').toUpperCase() as 'BUY' | 'SELL' | 'CLOSE' | 'ANALYZE';
+    const trader = new PaperTrader('binance');
+    const state = await trader.executeTradingViewSignal({
+      symbol,
+      action: ['BUY', 'SELL', 'CLOSE', 'ANALYZE'].includes(actionArg) ? actionArg : 'ANALYZE',
+      timeframe,
+      source: 'TradingView CLI'
+    });
+    console.log(`✅ Analyzed ${symbol} (${timeframe}) | Last Price: $${state.lastPrice.toFixed(2)}`);
+    console.log(`📊 Signal: ${state.lastSignal?.type} — ${state.lastSignal?.reason}`);
+    console.log(`💼 Paper Equity: $${state.equity.toFixed(2)} | Cash: $${state.cashBalance.toFixed(2)}`);
+    if (state.position) {
+      console.log(`📌 Open Position: LONG ${state.position.amount.toFixed(4)} ${state.position.symbol} @ $${state.position.entryPrice.toFixed(2)}`);
+    }
+    return;
+  }
 
   if (command === 'market') {
     console.log(`Fetching latest market ticker...`);

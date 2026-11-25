@@ -4,6 +4,7 @@ import { ExchangeConnector } from '../connectors/exchange';
 import { TechnicalIndicators } from '../indicators';
 import { createStrategy } from '../strategies';
 import { Position, StrategyId, TradeRecord, TradeSignal } from '../types';
+import { normalizeSymbolPair } from '../utils/tradingviewParser';
 
 export interface WorkerLog {
   timestamp: number;
@@ -182,7 +183,6 @@ export class PaperTrader {
     );
     this.saveState();
 
-    // Run immediate evaluation tick
     await this.tick();
 
     this.timer = setInterval(() => {
@@ -202,6 +202,141 @@ export class PaperTrader {
       this.appendLog('WARN', 'Worker STOPPED by user.');
       this.saveState();
     }
+    return this.getState();
+  }
+
+  private openLongPosition(price: number, atr: number, stopLoss?: number, takeProfit?: number, reason?: string): void {
+    const sl = stopLoss ?? price - 2.0 * atr;
+    const tp = takeProfit ?? price + 4.0 * atr;
+    const riskCapital = this.state.cashBalance * 0.02;
+    const stopDistance = Math.abs(price - sl);
+    const rawCost = stopDistance > 0 ? (riskCapital / stopDistance) * price : this.state.cashBalance * 0.5;
+    const allocatedCapital = Math.min(this.state.cashBalance * 0.95, Math.max(this.state.cashBalance * 0.25, rawCost));
+    const amount = allocatedCapital / price;
+
+    if (amount > 0 && this.state.cashBalance >= allocatedCapital) {
+      this.state.cashBalance -= allocatedCapital;
+      this.state.position = {
+        symbol: this.state.symbol,
+        entryPrice: price,
+        amount,
+        entryTime: Date.now(),
+        stopLoss: sl,
+        takeProfit: tp,
+        highestSinceEntry: price
+      };
+      this.appendLog(
+        'TRADE',
+        `OPENED LONG ${this.state.symbol} (${amount.toFixed(4)}) @ $${price.toFixed(2)} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} — ${reason || 'Signal'}`
+      );
+    }
+  }
+
+  private closePosition(exitPrice: number, exitReason: string): void {
+    const pos = this.state.position;
+    if (!pos) return;
+
+    const pnl = (exitPrice - pos.entryPrice) * pos.amount;
+    const pnlPercent = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+    this.state.cashBalance += pos.amount * pos.entryPrice + pnl;
+
+    this.state.trades.unshift({
+      entryTime: pos.entryTime,
+      exitTime: Date.now(),
+      entryPrice: pos.entryPrice,
+      exitPrice,
+      amount: pos.amount,
+      pnl,
+      pnlPercent,
+      type: 'LONG',
+      exitReason
+    });
+
+    this.state.position = null;
+    this.appendLog(
+      'TRADE',
+      `CLOSED LONG ${pos.symbol} @ $${exitPrice.toFixed(2)} | PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%) — ${exitReason}`
+    );
+  }
+
+  private recomputeEquity(markPrice: number): void {
+    if (this.state.position) {
+      const posValue = this.state.position.amount * markPrice;
+      const costBasis = this.state.position.amount * this.state.position.entryPrice;
+      this.state.unrealizedPnl = posValue - costBasis;
+      this.state.unrealizedPnlPercent = ((markPrice - this.state.position.entryPrice) / this.state.position.entryPrice) * 100;
+      this.state.equity = this.state.cashBalance + posValue;
+    } else {
+      this.state.unrealizedPnl = 0;
+      this.state.unrealizedPnlPercent = 0;
+      this.state.equity = this.state.cashBalance;
+    }
+  }
+
+  async executeTradingViewSignal(payload: {
+    symbol: string;
+    action: 'BUY' | 'SELL' | 'CLOSE' | 'ANALYZE';
+    timeframe?: string;
+    source?: string;
+  }): Promise<PaperWorkerState> {
+    const normalizedSymbol = normalizeSymbolPair(payload.symbol);
+    const timeframe = payload.timeframe || this.state.timeframe;
+    const source = payload.source || 'TradingView';
+
+    // Close existing position on a different symbol before switching if trading
+    if (this.state.position && this.state.position.symbol !== normalizedSymbol && payload.action !== 'ANALYZE') {
+      const oldTicker = await this.exchange.fetchTicker(this.state.position.symbol);
+      const oldPrice = oldTicker.last ?? this.state.position.entryPrice;
+      this.closePosition(oldPrice, `Switched symbol to ${normalizedSymbol}`);
+    }
+
+    this.state.symbol = normalizedSymbol;
+    this.state.timeframe = timeframe;
+
+    const candles = await this.exchange.fetchCandles(normalizedSymbol, timeframe, 260);
+    const latest = candles[candles.length - 1];
+    const atrValues = TechnicalIndicators.getATR(candles, 14);
+    const currentAtr = atrValues.length > 0 ? atrValues[atrValues.length - 1] : latest.close * 0.02;
+
+    const strategy = createStrategy(this.state.strategyId);
+    const quantSignal = strategy.analyze(candles);
+
+    this.state.lastPrice = latest.close;
+    this.state.lastSignal = quantSignal;
+    this.state.lastTickAt = Date.now();
+
+    const action = payload.action.toUpperCase() as 'BUY' | 'SELL' | 'CLOSE' | 'ANALYZE';
+
+    if (action === 'BUY') {
+      if (this.state.position && this.state.position.symbol === normalizedSymbol) {
+        this.appendLog('WARN', `${source} BUY ignored: already holding LONG ${normalizedSymbol}.`);
+      } else {
+        this.openLongPosition(
+          latest.close,
+          currentAtr,
+          quantSignal.stopLoss,
+          quantSignal.takeProfit,
+          `${source} Alert (Quant: ${quantSignal.reason})`
+        );
+      }
+    } else if (action === 'SELL' || action === 'CLOSE') {
+      if (this.state.position) {
+        this.closePosition(latest.close, `${source} ${action} Alert`);
+      } else {
+        this.appendLog('SIGNAL', `${source} ${action} received at $${latest.close.toFixed(2)} (No open position).`);
+      }
+    } else {
+      // ANALYZE mode: execute if quant strategy explicitly triggers BUY/SELL
+      this.appendLog('SIGNAL', `${source} Analysis on ${normalizedSymbol} @ $${latest.close.toFixed(2)}: ${quantSignal.type} — ${quantSignal.reason}`);
+      if (!this.state.position && quantSignal.type === 'BUY') {
+        this.openLongPosition(latest.close, currentAtr, quantSignal.stopLoss, quantSignal.takeProfit, quantSignal.reason);
+      } else if (this.state.position && quantSignal.type === 'SELL') {
+        this.closePosition(latest.close, quantSignal.reason);
+      }
+    }
+
+    this.recomputeEquity(latest.close);
+    this.saveState();
     return this.getState();
   }
 
@@ -227,102 +362,35 @@ export class PaperTrader {
       this.state.lastSignal = signal;
       this.state.lastTickAt = Date.now();
 
-      // 1. Evaluate active position (trailing stop, TP, or strategy SELL)
       if (this.state.position && this.state.position.symbol === this.state.symbol) {
         const pos = this.state.position;
         if (!pos.highestSinceEntry || latest.high > pos.highestSinceEntry) {
           pos.highestSinceEntry = latest.high;
         }
 
-        // Chandelier trailing stop
         const trailingStop = pos.highestSinceEntry - 1.8 * currentAtr;
         if (pos.stopLoss === undefined || trailingStop > pos.stopLoss) {
           pos.stopLoss = trailingStop;
         }
 
-        let shouldExit = false;
-        let exitReason = '';
-
         if (pos.stopLoss && latest.close <= pos.stopLoss) {
-          shouldExit = true;
-          exitReason = `Trailing Stop Hit ($${pos.stopLoss.toFixed(2)})`;
+          this.closePosition(latest.close, `Trailing Stop Hit ($${pos.stopLoss.toFixed(2)})`);
         } else if (pos.takeProfit && latest.close >= pos.takeProfit) {
-          shouldExit = true;
-          exitReason = `Take Profit Hit ($${pos.takeProfit.toFixed(2)})`;
+          this.closePosition(latest.close, `Take Profit Hit ($${pos.takeProfit.toFixed(2)})`);
         } else if (signal.type === 'SELL') {
-          shouldExit = true;
-          exitReason = signal.reason;
-        }
-
-        if (shouldExit) {
-          const exitPrice = latest.close;
-          const pnl = (exitPrice - pos.entryPrice) * pos.amount;
-          const pnlPercent = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
-          this.state.cashBalance += pos.amount * pos.entryPrice + pnl;
-
-          this.state.trades.unshift({
-            entryTime: pos.entryTime,
-            exitTime: Date.now(),
-            entryPrice: pos.entryPrice,
-            exitPrice,
-            amount: pos.amount,
-            pnl,
-            pnlPercent,
-            type: 'LONG',
-            exitReason
-          });
-
-          this.state.position = null;
-          this.appendLog(
-            'TRADE',
-            `CLOSED LONG ${this.state.symbol} @ $${exitPrice.toFixed(2)} | PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%) — ${exitReason}`
-          );
+          this.closePosition(latest.close, signal.reason);
         }
       }
 
-      // 2. Evaluate new BUY entry
       if (!this.state.position && signal.type === 'BUY') {
-        const riskCapital = this.state.cashBalance * 0.02;
-        const stopDistance = signal.stopLoss ? Math.abs(signal.price - signal.stopLoss) : currentAtr * 2;
-        const rawCost = stopDistance > 0 ? (riskCapital / stopDistance) * signal.price : this.state.cashBalance * 0.5;
-        const allocatedCapital = Math.min(this.state.cashBalance * 0.95, Math.max(this.state.cashBalance * 0.25, rawCost));
-        const amount = allocatedCapital / signal.price;
-
-        if (amount > 0 && this.state.cashBalance >= allocatedCapital) {
-          this.state.cashBalance -= allocatedCapital;
-          this.state.position = {
-            symbol: this.state.symbol,
-            entryPrice: signal.price,
-            amount,
-            entryTime: Date.now(),
-            stopLoss: signal.stopLoss,
-            takeProfit: signal.takeProfit,
-            highestSinceEntry: signal.price
-          };
-          this.appendLog(
-            'TRADE',
-            `OPENED LONG ${this.state.symbol} (${amount.toFixed(4)}) @ $${signal.price.toFixed(2)} | SL: $${(signal.stopLoss || 0).toFixed(2)} — ${signal.reason}`
-          );
-        }
+        this.openLongPosition(signal.price, currentAtr, signal.stopLoss, signal.takeProfit, signal.reason);
       } else if (signal.type === 'HOLD') {
         this.appendLog('SIGNAL', `Tick $${latest.close.toFixed(2)}: HOLD — ${signal.reason}`);
       } else if (signal.type === 'SELL' && !this.state.position) {
         this.appendLog('SIGNAL', `Tick $${latest.close.toFixed(2)}: SELL (Flat/No position) — ${signal.reason}`);
       }
 
-      // 3. Recompute Equity & Unrealized PnL
-      if (this.state.position) {
-        const posValue = this.state.position.amount * latest.close;
-        const costBasis = this.state.position.amount * this.state.position.entryPrice;
-        this.state.unrealizedPnl = posValue - costBasis;
-        this.state.unrealizedPnlPercent = ((latest.close - this.state.position.entryPrice) / this.state.position.entryPrice) * 100;
-        this.state.equity = this.state.cashBalance + posValue;
-      } else {
-        this.state.unrealizedPnl = 0;
-        this.state.unrealizedPnlPercent = 0;
-        this.state.equity = this.state.cashBalance;
-      }
-
+      this.recomputeEquity(latest.close);
       this.saveState();
     } catch (error: any) {
       this.appendLog('ERROR', `Tick failed: ${error?.message || String(error)}`);

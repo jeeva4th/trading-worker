@@ -8,6 +8,7 @@ import { BacktestEngine } from './engine/backtester';
 import { PaperTrader } from './engine/paperTrader';
 import { createStrategy, STRATEGY_CATALOG } from './strategies';
 import { Candle, StrategyId } from './types';
+import { parseTradingViewInput } from './utils/tradingviewParser';
 
 const PORT = Number(process.env.PORT || 3000);
 const WEB_DIR = path.join(process.cwd(), 'web');
@@ -48,7 +49,8 @@ function readJsonBody(req: http.IncomingMessage): Promise<Record<string, any>> {
       try {
         resolve(JSON.parse(body));
       } catch {
-        reject(new Error('Invalid JSON payload'));
+        // Support plain text webhook payloads like "BUY BINANCE:BTCUSDT"
+        resolve({ rawText: body.trim() });
       }
     });
     req.on('error', reject);
@@ -164,6 +166,63 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
+    if (url.pathname === '/api/tv/analyze' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const input = String(body.urlOrSymbol || body.symbol || 'BTC/USDT');
+      const parsed = parseTradingViewInput(input);
+      const timeframe = body.timeframe || parsed.timeframe || '1h';
+      const action = (body.action || 'ANALYZE') as 'BUY' | 'SELL' | 'CLOSE' | 'ANALYZE';
+
+      const workerState = await paperTrader.executeTradingViewSignal({
+        symbol: parsed.symbol,
+        action,
+        timeframe,
+        source: 'TradingView URL'
+      });
+
+      sendJson(res, 200, {
+        parsed,
+        timeframe,
+        workerState
+      });
+      return true;
+    }
+
+    if (url.pathname === '/api/webhook/tradingview' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      let rawSymbol = body.symbol || body.ticker || 'BTC/USDT';
+      let action = String(body.action || body.side || body.signal || 'ANALYZE').toUpperCase();
+
+      if (body.rawText && !body.symbol) {
+        const tokens = String(body.rawText).split(/\s+/);
+        if (tokens.length >= 2) {
+          action = tokens[0].toUpperCase();
+          rawSymbol = tokens[1];
+        } else {
+          rawSymbol = tokens[0];
+        }
+      }
+
+      const validAction = ['BUY', 'SELL', 'CLOSE', 'ANALYZE'].includes(action)
+        ? (action as 'BUY' | 'SELL' | 'CLOSE' | 'ANALYZE')
+        : 'ANALYZE';
+
+      const parsed = parseTradingViewInput(String(rawSymbol));
+      const workerState = await paperTrader.executeTradingViewSignal({
+        symbol: parsed.symbol,
+        action: validAction,
+        timeframe: body.timeframe || parsed.timeframe,
+        source: 'TradingView Webhook'
+      });
+
+      sendJson(res, 200, {
+        ok: true,
+        received: { symbol: parsed.symbol, action: validAction },
+        workerState
+      });
+      return true;
+    }
+
     if (url.pathname === '/api/backtest' && (req.method === 'GET' || req.method === 'POST')) {
       const body = req.method === 'POST' ? await readJsonBody(req) : {};
       const symbol = body.symbol || url.searchParams.get('symbol') || 'BTC/USDT';
@@ -269,7 +328,8 @@ export function startServer(port = PORT): http.Server {
   server.listen(port, () => {
     console.log(`\n======================================================`);
     console.log(`📈 Trading Worker + TradingView Terminal Running!`);
-    console.log(`🌐 Open in Browser: http://localhost:${port}`);
+    console.log(`🌐 Web App URL:  http://localhost:${port}`);
+    console.log(`🔗 TV Webhook:   http://localhost:${port}/api/webhook/tradingview`);
     console.log(`======================================================\n`);
   });
 

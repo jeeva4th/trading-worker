@@ -348,6 +348,61 @@ async function refreshWorkerStatus() {
 }
 
 function bindEvents() {
+  document.getElementById('btn-tv-analyze').addEventListener('click', async () => {
+    const inputEl = document.getElementById('tv-url-input');
+    const urlOrSymbol = inputEl.value.trim();
+    if (!urlOrSymbol) return;
+    const btn = document.getElementById('btn-tv-analyze');
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    try {
+      const res = await fetchJson('/api/tv/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urlOrSymbol, timeframe: state.timeframe, action: 'ANALYZE' })
+      });
+      state.symbol = res.parsed.symbol;
+      if (res.timeframe) state.timeframe = res.timeframe;
+
+      const selectEl = document.getElementById('symbol-select');
+      if (![...selectEl.options].some(o => o.value === state.symbol)) {
+        const opt = document.createElement('option');
+        opt.value = state.symbol;
+        opt.textContent = state.symbol;
+        selectEl.appendChild(opt);
+      }
+      selectEl.value = state.symbol;
+
+      renderWorkerState(res.workerState);
+      await loadMarket();
+      await runBacktest();
+      if (state.activeTab === 'tv') renderTradingViewProWidget();
+    } catch (err) {
+      alert(`Analyze failed: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Analyze URL';
+    }
+  });
+
+  document.getElementById('btn-sim-tv-buy').addEventListener('click', async () => {
+    const res = await fetchJson('/api/webhook/tradingview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, action: 'BUY', timeframe: state.timeframe })
+    });
+    renderWorkerState(res.workerState);
+  });
+
+  document.getElementById('btn-sim-tv-sell').addEventListener('click', async () => {
+    const res = await fetchJson('/api/webhook/tradingview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, action: 'SELL', timeframe: state.timeframe })
+    });
+    renderWorkerState(res.workerState);
+  });
+
   document.getElementById('symbol-select').addEventListener('change', async e => {
     state.symbol = e.target.value;
     await loadMarket();
