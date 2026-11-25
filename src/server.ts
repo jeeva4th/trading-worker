@@ -10,7 +10,7 @@ import { createStrategy, EmaVwapLiquidityStrategy, STRATEGY_CATALOG } from './st
 import { Candle, DEFAULT_STRATEGY_SETTINGS, StrategyId, StrategySettings } from './types';
 import { parseTradingViewInput } from './utils/tradingviewParser';
 
-const PORT = Number(process.env.PORT || 3456);
+const PORT = Number(process.env.PORT || 4567);
 const WEB_DIR = path.join(process.cwd(), 'web');
 
 const exchange = new ExchangeConnector('binance');
@@ -455,14 +455,26 @@ export function startServer(port = PORT): http.Server {
     }
   });
 
-  server.listen(port, () => {
-    console.log(`\n======================================================`);
-    console.log(`📈 Trading Worker + TradingView Quant Dashboard Running!`);
-    console.log(`🌐 Dashboard URL: http://localhost:${port}`);
-    console.log(`🔗 TV Webhook:    http://localhost:${port}/api/webhook/tradingview`);
-    console.log(`======================================================\n`);
-  });
+  const tryListen = (targetPort: number) => {
+    server.once('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`Port ${targetPort} in use, trying ${targetPort + 1}...`);
+        tryListen(targetPort + 1);
+      } else {
+        throw err;
+      }
+    });
 
+    server.listen(targetPort, () => {
+      console.log(`\n======================================================`);
+      console.log(`📈 Trading Worker + TradingView Quant Dashboard Running!`);
+      console.log(`🌐 Dashboard URL: http://localhost:${targetPort}`);
+      console.log(`🔗 TV Webhook:    http://localhost:${targetPort}/api/webhook/tradingview`);
+      console.log(`======================================================\n`);
+    });
+  };
+
+  tryListen(port);
   return server;
 }
 
