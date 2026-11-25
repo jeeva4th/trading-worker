@@ -1,0 +1,27 @@
+{
+  "name": "trading-worker",
+  "version": "1.0.0",
+  "description": "Multi-agent algorithmic trading worker powered by CCXT and top GitHub strategy engines",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "backtest": "ts-node src/cli.ts backtest",
+    "paper": "ts-node src/cli.ts paper",
+    "market": "ts-node src/cli.ts market",
+    "test": "ts-node src/cli.ts backtest"
+  },
+  "keywords": ["algorithmic-trading", "ccxt", "trading-bot", "backtesting", "quant"],
+  "author": "jeevaV4",
+  "license": "MIT",
+  "dependencies": {
+    "ccxt": "^4.4.52",
+    "technicalindicators": "^3.1.0",
+    "dotenv": "^16.4.7",
+    "cli-table3": "^0.6.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "ts-node": "^10.9.2",
+    "@types/node": "^22.13.4"
+  }
+}
