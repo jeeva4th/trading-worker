@@ -2,7 +2,7 @@ const state = {
   symbol: 'XAU/USD',
   timeframe: '1h',
   strategy: 'ema_vwap_liquidity',
-  activeTab: 'strategy',
+  activeView: 'terminal',
   tvWidgetInitializedFor: null
 };
 
@@ -26,6 +26,15 @@ let drawdownSeries = null;
 
 let dynamicPriceLines = [];
 
+function showToast(message) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
 function getSettingsFromUI() {
   return {
     fastEmaPeriod: Number(document.getElementById('set-fast-ema').value || 9),
@@ -40,27 +49,31 @@ function getSettingsFromUI() {
   };
 }
 
-function resetSettingsUI() {
-  document.getElementById('set-fast-ema').value = 9;
-  document.getElementById('set-slow-ema').value = 21;
-  document.getElementById('set-macro-ema').value = 200;
-  document.getElementById('set-lookback').value = 20;
-  document.getElementById('set-wick').value = 0.35;
-  document.getElementById('set-risk').value = 2.0;
-  document.getElementById('set-rr').value = 2.5;
-  document.getElementById('set-capital').value = 10000;
-  document.getElementById('set-trailing').checked = true;
+function applyPreset(name) {
+  const presets = {
+    conservative: { fast: 12, slow: 26, macro: 200, lookback: 30, wick: 0.45, risk: 1.0, rr: 3.0, trailing: true },
+    balanced: { fast: 9, slow: 21, macro: 200, lookback: 20, wick: 0.35, risk: 2.0, rr: 2.5, trailing: true },
+    aggressive: { fast: 5, slow: 13, macro: 100, lookback: 12, wick: 0.25, risk: 3.0, rr: 2.0, trailing: true }
+  };
+  const p = presets[name] || presets.balanced;
+  document.getElementById('set-fast-ema').value = p.fast;
+  document.getElementById('set-slow-ema').value = p.slow;
+  document.getElementById('set-macro-ema').value = p.macro;
+  document.getElementById('set-lookback').value = p.lookback;
+  document.getElementById('set-wick').value = p.wick;
+  document.getElementById('set-risk').value = p.risk;
+  document.getElementById('set-rr').value = p.rr;
+  document.getElementById('set-trailing').checked = p.trailing;
 }
 
 function initCharts() {
   const chartOpts = {
-    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
-    grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
-    rightPriceScale: { borderColor: '#262c3d' },
-    timeScale: { borderColor: '#262c3d', timeVisible: true, secondsVisible: false }
+    layout: { background: { type: 'solid', color: 'transparent' }, textColor: '#8b9bb4', fontFamily: 'Inter, sans-serif' },
+    grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
+    rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
+    timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }
   };
 
-  // 1. Main Price + EMA + VWAP + Liquidity Chart
   const chartEl = document.getElementById('tv-lightweight-chart');
   mainChart = LightweightCharts.createChart(chartEl, {
     ...chartOpts,
@@ -68,71 +81,63 @@ function initCharts() {
   });
 
   candleSeries = mainChart.addCandlestickSeries({
-    upColor: '#26a69a',
-    downColor: '#ef5350',
+    upColor: '#10b981',
+    downColor: '#f43f5e',
     borderVisible: false,
-    wickUpColor: '#26a69a',
-    wickDownColor: '#ef5350'
+    wickUpColor: '#10b981',
+    wickDownColor: '#f43f5e'
   });
 
   volumeSeries = mainChart.addHistogramSeries({
     priceFormat: { type: 'volume' },
     priceScaleId: '',
-    scaleMargins: { top: 0.84, bottom: 0 }
+    scaleMargins: { top: 0.85, bottom: 0 }
   });
 
-  emaFastSeries = mainChart.addLineSeries({ color: '#22d3ee', lineWidth: 1.5, priceLineVisible: false });
+  emaFastSeries = mainChart.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false });
   emaSlowSeries = mainChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false });
   emaMacroSeries = mainChart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
-
   vwapSeries = mainChart.addLineSeries({ color: '#fbbf24', lineWidth: 2, priceLineVisible: false });
-  vwapUpperSeries = mainChart.addLineSeries({
-    color: 'rgba(251, 191, 36, 0.4)',
-    lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dotted,
-    priceLineVisible: false
-  });
-  vwapLowerSeries = mainChart.addLineSeries({
-    color: 'rgba(251, 191, 36, 0.4)',
-    lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dotted,
-    priceLineVisible: false
-  });
+  vwapUpperSeries = mainChart.addLineSeries({ color: 'rgba(251,191,36,0.38)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, priceLineVisible: false });
+  vwapLowerSeries = mainChart.addLineSeries({ color: 'rgba(251,191,36,0.38)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, priceLineVisible: false });
 
-  // 2. Oscillator Graph (RSI + ADX)
   const oscEl = document.getElementById('oscillator-chart');
   oscillatorChart = LightweightCharts.createChart(oscEl, chartOpts);
-  rsiSeries = oscillatorChart.addLineSeries({ color: '#22d3ee', lineWidth: 1.8, title: 'RSI' });
-  adxSeries = oscillatorChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, title: 'ADX' });
-  rsiSeries.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
-  rsiSeries.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
-  adxSeries.createPriceLine({ price: 22, color: 'rgba(245, 158, 11, 0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
+  rsiSeries = oscillatorChart.addLineSeries({ color: '#38bdf8', lineWidth: 1.8 });
+  adxSeries = oscillatorChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5 });
+  rsiSeries.createPriceLine({ price: 70, color: 'rgba(244,63,94,0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+  rsiSeries.createPriceLine({ price: 30, color: 'rgba(16,185,129,0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+  adxSeries.createPriceLine({ price: 22, color: 'rgba(245,158,11,0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
 
-  // 3. Equity Curve & Drawdown Graph
   const eqEl = document.getElementById('equity-chart');
   equityChart = LightweightCharts.createChart(eqEl, chartOpts);
   equitySeries = equityChart.addAreaSeries({
-    topColor: 'rgba(41, 98, 255, 0.35)',
-    bottomColor: 'rgba(41, 98, 255, 0.02)',
-    lineColor: '#2962ff',
+    topColor: 'rgba(56, 189, 248, 0.35)',
+    bottomColor: 'rgba(56, 189, 248, 0.02)',
+    lineColor: '#38bdf8',
     lineWidth: 2
   });
   drawdownSeries = equityChart.addHistogramSeries({
-    color: 'rgba(239, 83, 80, 0.45)',
+    color: 'rgba(244, 63, 94, 0.45)',
     priceScaleId: 'left',
     priceFormat: { type: 'percent' }
   });
   equityChart.priceScale('left').applyOptions({
     visible: true,
-    borderColor: '#262c3d',
-    scaleMargins: { top: 0.7, bottom: 0 }
+    borderColor: 'rgba(255,255,255,0.08)',
+    scaleMargins: { top: 0.72, bottom: 0 }
   });
 
-  window.addEventListener('resize', () => {
-    if (mainChart) mainChart.applyOptions({ width: chartEl.clientWidth });
-    if (oscillatorChart) oscillatorChart.applyOptions({ width: oscEl.clientWidth });
-    if (equityChart) equityChart.applyOptions({ width: eqEl.clientWidth });
-  });
+  window.addEventListener('resize', resizeCharts);
+}
+
+function resizeCharts() {
+  const chartEl = document.getElementById('tv-lightweight-chart');
+  const oscEl = document.getElementById('oscillator-chart');
+  const eqEl = document.getElementById('equity-chart');
+  if (mainChart && chartEl.clientWidth > 0) mainChart.applyOptions({ width: chartEl.clientWidth });
+  if (oscillatorChart && oscEl.clientWidth > 0) oscillatorChart.applyOptions({ width: oscEl.clientWidth });
+  if (equityChart && eqEl.clientWidth > 0) equityChart.applyOptions({ width: eqEl.clientWidth });
 }
 
 function clearDynamicPriceLines() {
@@ -145,7 +150,6 @@ function clearDynamicPriceLines() {
 function applyLayerVisibility() {
   const showEmas = document.getElementById('toggle-emas').checked;
   const showVwap = document.getElementById('toggle-vwap').checked;
-
   emaFastSeries.applyOptions({ visible: showEmas });
   emaSlowSeries.applyOptions({ visible: showEmas });
   emaMacroSeries.applyOptions({ visible: showEmas });
@@ -171,7 +175,7 @@ function renderTradingViewProWidget() {
   container.innerHTML = '';
 
   if (typeof TradingView === 'undefined') {
-    container.innerHTML = '<div style="padding:20px;color:#787b86;">TradingView widget offline. Use All Graphs view.</div>';
+    container.innerHTML = '<div class="empty-msg">TradingView script unavailable offline.</div>';
     return;
   }
 
@@ -201,14 +205,18 @@ async function fetchJson(url, options) {
 
 function renderChecklist(id, pass) {
   const el = document.getElementById(id);
-  el.className = `check-item ${pass ? 'pass' : 'fail'}`;
+  el.className = `check-pill ${pass ? 'pass' : 'fail'}`;
   el.querySelector('strong').textContent = pass ? '✓ PASS' : 'WAIT';
 }
 
 function renderSetupDiagnostics(diag) {
   if (!diag) return;
-  document.getElementById('metric-score').textContent = `${diag.score}%`;
-  document.getElementById('setup-score-badge').textContent = `${diag.score}%`;
+  const score = Math.min(100, Math.max(0, diag.score || 0));
+  document.getElementById('setup-score-badge').textContent = `${score}%`;
+
+  const circumference = 113.1;
+  const offset = circumference - (score / 100) * circumference;
+  document.getElementById('setup-gauge-ring').style.strokeDashoffset = offset.toFixed(1);
 
   renderChecklist('chk-ema', diag.emaAligned);
   renderChecklist('chk-vwap', diag.vwapReaction);
@@ -221,6 +229,28 @@ function renderSetupDiagnostics(diag) {
   document.getElementById('setup-sl').textContent = `$${diag.suggestedStopLoss.toLocaleString()}`;
   document.getElementById('setup-tp').textContent = `$${diag.suggestedTakeProfit.toLocaleString()}`;
   document.getElementById('setup-sweep-type').textContent = diag.sweepType;
+}
+
+function syncAssetPills() {
+  document.querySelectorAll('#asset-pills .asset-pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.sym === state.symbol);
+  });
+}
+
+async function loadMtfMatrix() {
+  try {
+    const res = await fetchJson(`/api/mtf?symbol=${encodeURIComponent(state.symbol)}`);
+    const container = document.getElementById('mtf-matrix');
+    container.innerHTML = res.matrix
+      .map(item => {
+        const cls = item.bias === 'BULLISH' ? 'bull' : item.bias === 'BEARISH' ? 'bear' : '';
+        const arrow = item.bias === 'BULLISH' ? '▲' : item.bias === 'BEARISH' ? '▼' : '•';
+        return `<span class="mtf-chip ${cls}" title="RSI ${item.rsi} | ADX ${item.adx}">${item.timeframe} ${arrow}</span>`;
+      })
+      .join('');
+  } catch {
+    // Non-fatal
+  }
 }
 
 async function loadMarket() {
@@ -249,7 +279,7 @@ async function loadMarket() {
       data.candles.map(c => ({
         time: c.time,
         value: c.volume,
-        color: c.close >= c.open ? 'rgba(38, 166, 154, 0.35)' : 'rgba(239, 83, 80, 0.35)'
+        color: c.close >= c.open ? 'rgba(16, 185, 129, 0.32)' : 'rgba(244, 63, 94, 0.32)'
       }))
     );
 
@@ -259,86 +289,50 @@ async function loadMarket() {
     vwapSeries.setData(data.indicators.vwap);
     vwapUpperSeries.setData(data.indicators.vwapUpper);
     vwapLowerSeries.setData(data.indicators.vwapLower);
-
     rsiSeries.setData(data.indicators.rsiSeries);
     adxSeries.setData(data.indicators.adxSeries);
 
     applyLayerVisibility();
 
-    // Update Telemetry Strip
-    document.getElementById('metric-symbol').textContent = data.symbol;
+    document.getElementById('metric-symbol').textContent = state.symbol === 'XAU/USD' ? 'XAU/USD · GOLD' : state.symbol;
     document.getElementById('metric-price').textContent = `$${Number(data.ticker.last).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 
     const change = Number(data.ticker.changePercent || 0);
     const changeEl = document.getElementById('metric-change');
-    changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}% (24h)`;
-    changeEl.className = `metric-sub ${change >= 0 ? 'pos-text-green' : 'pos-text-red'}`;
+    changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    changeEl.className = `change-badge ${change >= 0 ? 'up' : 'down'}`;
 
+    document.getElementById('metric-vwap').textContent = `Session VWAP: $${data.metrics.vwap.toLocaleString()}`;
     const regimeEl = document.getElementById('metric-regime');
     regimeEl.textContent = data.metrics.regime;
-    regimeEl.className = `regime-badge ${data.metrics.regimeBadge}`;
-    document.getElementById('metric-adx').textContent = `ADX: ${data.metrics.adx} | RSI: ${data.metrics.rsi}`;
-
-    document.getElementById('metric-vwap').textContent = `VWAP $${data.metrics.vwap.toLocaleString()}`;
-    document.getElementById('metric-ema200').textContent = `200 EMA: $${data.metrics.ema200 ?? '—'} | ATR: $${data.metrics.atr}`;
+    regimeEl.className = `regime-tag ${data.metrics.regimeBadge}`;
+    document.getElementById('metric-adx').textContent = `ADX ${data.metrics.adx} · RSI ${data.metrics.rsi} · ATR $${data.metrics.atr}`;
+    document.getElementById('metric-ema200').textContent = `200 EMA Anchor: $${data.metrics.ema200 ?? '—'}`;
 
     const sigEl = document.getElementById('metric-signal');
     sigEl.textContent = data.signal.type;
-    sigEl.className = `signal-pill ${data.signal.type.toLowerCase()}`;
+    sigEl.className = `signal-tag ${data.signal.type.toLowerCase()}`;
     document.getElementById('metric-signal-reason').textContent = data.signal.reason;
 
-    if (data.diagnostics) {
-      renderSetupDiagnostics(data.diagnostics);
-    }
+    if (data.diagnostics) renderSetupDiagnostics(data.diagnostics);
 
-    // Draw Liquidity Pools & Setup SL/TP Price Lines
     clearDynamicPriceLines();
-    const showLiquidity = document.getElementById('toggle-liquidity').checked;
-    if (showLiquidity && data.diagnostics) {
+    if (document.getElementById('toggle-liquidity').checked && data.diagnostics) {
       dynamicPriceLines.push(
-        candleSeries.createPriceLine({
-          price: data.diagnostics.buySideLiquidity,
-          color: '#ec4899',
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          title: 'BSL (High)'
-        }),
-        candleSeries.createPriceLine({
-          price: data.diagnostics.sellSideLiquidity,
-          color: '#22d3ee',
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          title: 'SSL (Low)'
-        })
+        candleSeries.createPriceLine({ price: data.diagnostics.buySideLiquidity, color: '#ec4899', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'BSL' }),
+        candleSeries.createPriceLine({ price: data.diagnostics.sellSideLiquidity, color: '#38bdf8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'SSL' })
       );
     }
-
     if (data.signal.stopLoss || data.diagnostics?.suggestedStopLoss) {
-      dynamicPriceLines.push(
-        candleSeries.createPriceLine({
-          price: data.signal.stopLoss || data.diagnostics.suggestedStopLoss,
-          color: '#ef5350',
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dotted,
-          title: 'Setup SL'
-        })
-      );
+      dynamicPriceLines.push(candleSeries.createPriceLine({ price: data.signal.stopLoss || data.diagnostics.suggestedStopLoss, color: '#f43f5e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'SL' }));
     }
     if (data.signal.takeProfit || data.diagnostics?.suggestedTakeProfit) {
-      dynamicPriceLines.push(
-        candleSeries.createPriceLine({
-          price: data.signal.takeProfit || data.diagnostics.suggestedTakeProfit,
-          color: '#26a69a',
-          lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dotted,
-          title: 'Setup TP'
-        })
-      );
+      dynamicPriceLines.push(candleSeries.createPriceLine({ price: data.signal.takeProfit || data.diagnostics.suggestedTakeProfit, color: '#10b981', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'TP' }));
     }
 
     mainChart.timeScale().fitContent();
     oscillatorChart.timeScale().fitContent();
-    statusEl.textContent = `Synced ${data.candles.length} candles`;
+    statusEl.textContent = `${data.candles.length} candles · Live`;
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
   }
@@ -346,8 +340,10 @@ async function loadMarket() {
 
 async function runBacktest() {
   const btn = document.getElementById('btn-run-backtest');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+  }
   const settings = getSettingsFromUI();
 
   try {
@@ -365,20 +361,8 @@ async function runBacktest() {
 
     const markers = [];
     for (const t of res.trades) {
-      markers.push({
-        time: t.entryTimeSec,
-        position: 'belowBar',
-        color: '#26a69a',
-        shape: 'arrowUp',
-        text: `BUY @${t.entryPrice.toFixed(1)}`
-      });
-      markers.push({
-        time: t.exitTimeSec,
-        position: 'aboveBar',
-        color: t.pnl >= 0 ? '#fbbf24' : '#ef5350',
-        shape: 'arrowDown',
-        text: `${t.pnl >= 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%`
-      });
+      markers.push({ time: t.entryTimeSec, position: 'belowBar', color: '#10b981', shape: 'arrowUp', text: `BUY` });
+      markers.push({ time: t.exitTimeSec, position: 'aboveBar', color: t.pnl >= 0 ? '#fbbf24' : '#f43f5e', shape: 'arrowDown', text: `${t.pnl >= 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%` });
     }
     markers.sort((a, b) => a.time - b.time);
     candleSeries.setMarkers(markers);
@@ -387,50 +371,50 @@ async function runBacktest() {
     drawdownSeries.setData(res.equityCurve.map(p => ({ time: p.time, value: p.drawdown })));
     equityChart.timeScale().fitContent();
 
-    document.getElementById('equity-summary').textContent =
-      `Final: $${res.finalBalance.toFixed(2)} (${res.totalPnlPercent >= 0 ? '+' : ''}${res.totalPnlPercent.toFixed(2)}%)`;
+    document.getElementById('equity-summary').textContent = `$${res.finalBalance.toFixed(2)} (${res.totalPnlPercent >= 0 ? '+' : ''}${res.totalPnlPercent.toFixed(2)}%)`;
 
     const retEl = document.getElementById('bt-return');
     retEl.textContent = `${res.totalPnlPercent >= 0 ? '+' : ''}${res.totalPnlPercent.toFixed(2)}%`;
-    retEl.className = res.totalPnlPercent >= 0 ? 'pos-text-green' : 'pos-text-red';
+    retEl.className = `big-stat mono ${res.totalPnlPercent >= 0 ? 'green' : 'red'}`;
 
     document.getElementById('bt-winrate').textContent = `${res.winRate.toFixed(1)}%`;
     document.getElementById('bt-pf').textContent = `${res.profitFactor}`;
     document.getElementById('bt-dd').textContent = `${res.maxDrawdownPercent.toFixed(2)}%`;
     document.getElementById('bt-trade-count').textContent = res.totalTrades;
-    document.getElementById('bt-trade-count-label').textContent = `${res.totalTrades} trades`;
 
-    const tradesList = document.getElementById('bt-trades');
+    const tbody = document.getElementById('bt-trades-tbody');
     if (res.trades.length === 0) {
-      tradesList.innerHTML = '<div class="pos-empty">No trades triggered in this window (Capital preserved).</div>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No trades triggered in this window (Capital preserved).</td></tr>';
     } else {
-      tradesList.innerHTML = res.trades
+      tbody.innerHTML = res.trades
         .slice()
         .reverse()
-        .map(t => `
-          <div class="trade-item ${t.pnl >= 0 ? 'win' : 'loss'}">
-            <div class="trade-row">
-              <strong>LONG $${t.entryPrice.toFixed(2)} → $${t.exitPrice.toFixed(2)}</strong>
-              <strong class="${t.pnl >= 0 ? 'pos-text-green' : 'pos-text-red'}">
-                ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)} (${t.pnlPercent.toFixed(2)}%)
-              </strong>
-            </div>
-            <div class="metric-sub">${t.exitReason}</div>
-          </div>
+        .map((t, idx) => `
+          <tr>
+            <td class="mono">#${res.trades.length - idx}</td>
+            <td><span class="signal-tag buy">${t.type}</span></td>
+            <td class="mono">$${t.entryPrice.toFixed(2)}</td>
+            <td class="mono">$${t.exitPrice.toFixed(2)}</td>
+            <td class="mono ${t.pnl >= 0 ? 'green' : 'red'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</td>
+            <td class="mono ${t.pnl >= 0 ? 'green' : 'red'}">${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(2)}%</td>
+            <td>${t.exitReason}</td>
+          </tr>
         `)
         .join('');
     }
   } catch (err) {
-    alert(`Backtest failed: ${err.message}`);
+    showToast(`Backtest error: ${err.message}`);
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Run Backtest';
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '▶ Re-Run Backtest';
+    }
   }
 }
 
 async function scanSetups() {
   const tbody = document.getElementById('scanner-tbody');
-  tbody.innerHTML = '<tr><td colspan="8" class="pos-empty">Scanning XAU/USD, BTC, ETH, SOL, BNB...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">Scanning markets...</td></tr>';
   const s = getSettingsFromUI();
 
   try {
@@ -442,76 +426,107 @@ async function scanSetups() {
       lookback: String(s.liquidityLookback),
       minWick: String(s.minWickRatio)
     });
-
     const res = await fetchJson(`/api/setups/scan?${qs.toString()}`);
+
     tbody.innerHTML = res.setups
       .map(item => {
         const d = item.diagnostics;
+        const score = d ? d.score : 0;
         return `
           <tr>
             <td><strong>${item.symbol}</strong></td>
-            <td>$${Number(item.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-            <td><span class="score-pill">${d ? d.score : 0}%</span></td>
+            <td class="mono">$${Number(item.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+            <td><span class="model-chip mono">${score}%</span></td>
             <td>${d ? d.sweepType : 'NONE'}</td>
-            <td>${d ? `$${d.sellSideLiquidity.toFixed(1)} / $${d.buySideLiquidity.toFixed(1)}` : '—'}</td>
-            <td>${d ? `$${d.vwap.toFixed(1)}` : '—'}</td>
-            <td><span class="signal-pill ${item.signal.toLowerCase()}">${item.signal}</span></td>
-            <td><button class="btn btn-ghost btn-sm" onclick="selectScannedAsset('${item.symbol}')">Load</button></td>
+            <td class="mono">${d ? `$${d.sellSideLiquidity.toFixed(1)} / $${d.buySideLiquidity.toFixed(1)}` : '—'}</td>
+            <td class="mono">${d ? `$${d.vwap.toFixed(1)}` : '—'}</td>
+            <td><span class="signal-tag ${item.signal.toLowerCase()}">${item.signal}</span></td>
+            <td>
+              <button class="chip-btn" onclick="selectScannedAsset('${item.symbol}')">Inspect</button>
+              <button class="chip-btn" onclick="quickPaperBuy('${item.symbol}')">Buy</button>
+            </td>
           </tr>
         `;
       })
       .join('');
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="8" class="pos-empty">Scanner error: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-msg">Error: ${err.message}</td></tr>`;
   }
 }
 
 window.selectScannedAsset = async function selectScannedAsset(symbol) {
   state.symbol = symbol;
-  document.getElementById('symbol-select').value = symbol;
-  await loadMarket();
-  await runBacktest();
-  if (state.activeTab === 'tv') renderTradingViewProWidget();
+  syncAssetPills();
+  switchView('terminal');
+  await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
+  showToast(`Loaded ${symbol} in Terminal`);
 };
+
+window.quickPaperBuy = async function quickPaperBuy(symbol) {
+  const res = await fetchJson('/api/webhook/tradingview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol, action: 'BUY', timeframe: state.timeframe })
+  });
+  renderWorkerState(res.workerState);
+  showToast(`Paper BUY executed on ${symbol}`);
+};
+
+function switchView(viewId) {
+  state.activeView = viewId;
+  document.querySelectorAll('.rail-btn').forEach(b => b.classList.toggle('active', b.dataset.view === viewId));
+  document.querySelectorAll('.view-pane').forEach(p => p.classList.toggle('active', p.id === `view-${viewId}`));
+
+  if (viewId === 'terminal') setTimeout(resizeCharts, 50);
+  if (viewId === 'tvpro') renderTradingViewProWidget();
+}
 
 function renderWorkerState(w) {
   const badge = document.getElementById('worker-badge');
   badge.textContent = w.running ? 'RUNNING' : 'STOPPED';
-  badge.className = `worker-status-dot ${w.running ? 'running' : ''}`;
+  badge.className = `status-badge ${w.running ? 'running' : ''}`;
+
+  const headerPill = document.getElementById('header-bot-pill');
+  headerPill.classList.toggle('active', w.running);
+  document.getElementById('header-bot-text').textContent = w.running ? `LIVE · ${w.symbol}` : 'STANDBY';
 
   document.getElementById('btn-worker-start').disabled = w.running;
   document.getElementById('btn-worker-stop').disabled = !w.running;
+  document.getElementById('worker-strategy-label').textContent = w.strategyName;
 
   document.getElementById('worker-cash').textContent = `$${w.cashBalance.toFixed(2)}`;
-  document.getElementById('worker-equity').textContent = `$${w.equity.toFixed(2)}`;
+  const realEl = document.getElementById('worker-realized');
+  const realPnl = w.realizedPnl || 0;
+  realEl.textContent = `${realPnl >= 0 ? '+' : ''}$${realPnl.toFixed(2)}`;
+  realEl.className = realPnl >= 0 ? 'green' : 'red';
+
   document.getElementById('metric-equity').textContent = `$${w.equity.toFixed(2)}`;
+  document.getElementById('metric-winrate').textContent = `WR: ${(w.winRate || 0).toFixed(1)}%`;
 
   const unrEl = document.getElementById('metric-unrealized');
   unrEl.textContent = `Unrealized: ${w.unrealizedPnl >= 0 ? '+' : ''}$${w.unrealizedPnl.toFixed(2)}`;
-  unrEl.className = `metric-sub ${w.unrealizedPnl >= 0 ? 'pos-text-green' : 'pos-text-red'}`;
+  unrEl.className = `kpi-sub mono ${w.unrealizedPnl >= 0 ? 'green' : 'red'}`;
 
   const posBox = document.getElementById('position-box');
   if (w.position) {
     posBox.innerHTML = `
-      <div class="trade-row">
-        <strong>OPEN LONG ${w.position.symbol}</strong>
-        <strong class="${w.unrealizedPnl >= 0 ? 'pos-text-green' : 'pos-text-red'}">
-          ${w.unrealizedPnlPercent >= 0 ? '+' : ''}${w.unrealizedPnlPercent.toFixed(2)}%
-        </strong>
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+        <strong>LONG ${w.position.symbol}</strong>
+        <strong class="mono ${w.unrealizedPnl >= 0 ? 'green' : 'red'}">${w.unrealizedPnlPercent >= 0 ? '+' : ''}${w.unrealizedPnlPercent.toFixed(2)}%</strong>
       </div>
-      <div class="metric-sub">Entry: $${w.position.entryPrice.toFixed(2)} | Size: ${w.position.amount.toFixed(4)}</div>
-      <div class="metric-sub">SL: $${(w.position.stopLoss || 0).toFixed(2)} | TP: $${(w.position.takeProfit || 0).toFixed(2)}</div>
+      <div class="muted mono">Entry: $${w.position.entryPrice.toFixed(2)} · Qty: ${w.position.amount.toFixed(4)}</div>
+      <div class="muted mono">SL: $${(w.position.stopLoss || 0).toFixed(2)} · TP: $${(w.position.takeProfit || 0).toFixed(2)}</div>
     `;
   } else {
-    posBox.innerHTML = `<div class="pos-empty">No open position (${w.symbol} Flat)</div>`;
+    posBox.innerHTML = `<div class="empty-msg">Flat (${w.symbol}) — Ready for setup</div>`;
   }
 
   const logsEl = document.getElementById('worker-logs');
   logsEl.innerHTML = (w.logs || [])
-    .slice(0, 20)
+    .slice(0, 18)
     .map(log => {
       const time = new Date(log.timestamp).toLocaleTimeString();
-      return `<div class="log-item ${log.level}"><strong>[${time}]</strong> ${log.message}</div>`;
+      return `<div class="feed-item ${log.level}"><span class="mono muted">[${time}]</span> ${log.message}</div>`;
     })
     .join('');
 }
@@ -521,39 +536,67 @@ async function refreshWorkerStatus() {
     const w = await fetchJson('/api/worker/status');
     renderWorkerState(w);
   } catch {
-    // Ignore transient polling issue
+    // Ignore transient poll errors
   }
 }
 
 function bindEvents() {
+  document.querySelectorAll('.rail-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
+
+  document.querySelectorAll('#asset-pills .asset-pill').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      state.symbol = btn.dataset.sym;
+      syncAssetPills();
+      await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
+      if (state.activeView === 'tvpro') renderTradingViewProWidget();
+    });
+  });
+
+  document.querySelectorAll('#timeframe-pills .seg-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      document.querySelectorAll('#timeframe-pills .seg-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.timeframe = btn.dataset.tf;
+      await Promise.all([loadMarket(), runBacktest(), scanSetups()]);
+      if (state.activeView === 'tvpro') renderTradingViewProWidget();
+    });
+  });
+
+  document.getElementById('strategy-select').addEventListener('change', async e => {
+    state.strategy = e.target.value;
+    await Promise.all([loadMarket(), runBacktest()]);
+    showToast(`Switched model to ${e.target.options[e.target.selectedIndex].text}`);
+  });
+
   document.getElementById('toggle-emas').addEventListener('change', applyLayerVisibility);
   document.getElementById('toggle-vwap').addEventListener('change', applyLayerVisibility);
   document.getElementById('toggle-liquidity').addEventListener('change', loadMarket);
 
-  document.getElementById('btn-apply-settings').addEventListener('click', async () => {
-    const settings = getSettingsFromUI();
-    await fetchJson('/api/worker/configure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbol: state.symbol,
-        timeframe: state.timeframe,
-        strategyId: state.strategy,
-        settings
-      })
-    });
-    await loadMarket();
-    await runBacktest();
-    await scanSetups();
+  document.getElementById('btn-tv-analyze').addEventListener('click', async () => {
+    const urlOrSymbol = document.getElementById('tv-url-input').value.trim();
+    if (!urlOrSymbol) return;
+    try {
+      const res = await fetchJson('/api/tv/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urlOrSymbol, timeframe: state.timeframe, action: 'ANALYZE' })
+      });
+      state.symbol = res.parsed.symbol;
+      if (res.timeframe) state.timeframe = res.timeframe;
+      syncAssetPills();
+      renderWorkerState(res.workerState);
+      await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
+      showToast(`Analyzed ${state.symbol} (${state.timeframe})`);
+    } catch (err) {
+      showToast(`Analyze failed: ${err.message}`);
+    }
   });
 
-  document.getElementById('btn-reset-settings').addEventListener('click', async () => {
-    resetSettingsUI();
-    await loadMarket();
-    await runBacktest();
+  document.getElementById('tv-url-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-tv-analyze').click();
   });
-
-  document.getElementById('btn-scan-setups').addEventListener('click', scanSetups);
 
   document.getElementById('btn-take-setup').addEventListener('click', async () => {
     const res = await fetchJson('/api/webhook/tradingview', {
@@ -562,6 +605,7 @@ function bindEvents() {
       body: JSON.stringify({ symbol: state.symbol, action: 'BUY', timeframe: state.timeframe })
     });
     renderWorkerState(res.workerState);
+    showToast(`Opened Paper LONG on ${state.symbol}`);
   });
 
   document.getElementById('btn-close-setup').addEventListener('click', async () => {
@@ -571,91 +615,7 @@ function bindEvents() {
       body: JSON.stringify({ symbol: state.symbol, action: 'SELL', timeframe: state.timeframe })
     });
     renderWorkerState(res.workerState);
-  });
-
-  document.getElementById('btn-tv-analyze').addEventListener('click', async () => {
-    const urlOrSymbol = document.getElementById('tv-url-input').value.trim();
-    if (!urlOrSymbol) return;
-    const btn = document.getElementById('btn-tv-analyze');
-    btn.disabled = true;
-    btn.textContent = 'Analyzing...';
-    try {
-      const res = await fetchJson('/api/tv/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urlOrSymbol, timeframe: state.timeframe, action: 'ANALYZE' })
-      });
-      state.symbol = res.parsed.symbol;
-      if (res.timeframe) state.timeframe = res.timeframe;
-
-      const selectEl = document.getElementById('symbol-select');
-      if (![...selectEl.options].some(o => o.value === state.symbol)) {
-        const opt = document.createElement('option');
-        opt.value = state.symbol;
-        opt.textContent = state.symbol;
-        selectEl.appendChild(opt);
-      }
-      selectEl.value = state.symbol;
-
-      renderWorkerState(res.workerState);
-      await loadMarket();
-      await runBacktest();
-      if (state.activeTab === 'tv') renderTradingViewProWidget();
-    } catch (err) {
-      alert(`Analyze failed: ${err.message}`);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Analyze URL';
-    }
-  });
-
-  document.getElementById('symbol-select').addEventListener('change', async e => {
-    state.symbol = e.target.value;
-    await loadMarket();
-    await runBacktest();
-    if (state.activeTab === 'tv') renderTradingViewProWidget();
-  });
-
-  document.getElementById('strategy-select').addEventListener('change', async e => {
-    state.strategy = e.target.value;
-    await loadMarket();
-    await runBacktest();
-  });
-
-  document.querySelectorAll('#timeframe-pills .pill').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      document.querySelectorAll('#timeframe-pills .pill').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.timeframe = btn.dataset.tf;
-      await loadMarket();
-      await runBacktest();
-      await scanSetups();
-      if (state.activeTab === 'tv') renderTradingViewProWidget();
-    });
-  });
-
-  document.getElementById('tab-strategy-chart').addEventListener('click', () => {
-    state.activeTab = 'strategy';
-    document.getElementById('tab-strategy-chart').classList.add('active');
-    document.getElementById('tab-tv-widget').classList.remove('active');
-    document.getElementById('strategy-chart-panel').classList.remove('hidden');
-    document.getElementById('tv-widget-panel').classList.add('hidden');
-  });
-
-  document.getElementById('tab-tv-widget').addEventListener('click', () => {
-    state.activeTab = 'tv';
-    document.getElementById('tab-tv-widget').classList.add('active');
-    document.getElementById('tab-strategy-chart').classList.remove('active');
-    document.getElementById('strategy-chart-panel').classList.add('hidden');
-    document.getElementById('tv-widget-panel').classList.remove('hidden');
-    renderTradingViewProWidget();
-  });
-
-  document.getElementById('btn-run-backtest').addEventListener('click', runBacktest);
-  document.getElementById('btn-refresh').addEventListener('click', async () => {
-    await loadMarket();
-    await refreshWorkerStatus();
-    await scanSetups();
+    showToast(`Closed Paper Position on ${state.symbol}`);
   });
 
   document.getElementById('btn-worker-start').addEventListener('click', async () => {
@@ -671,52 +631,98 @@ function bindEvents() {
       })
     });
     renderWorkerState(w);
+    showToast(`Auto-Bot started on ${state.symbol}`);
   });
 
   document.getElementById('btn-worker-stop').addEventListener('click', async () => {
     const w = await fetchJson('/api/worker/stop', { method: 'POST' });
     renderWorkerState(w);
+    showToast('Auto-Bot paused');
   });
 
   document.getElementById('btn-worker-tick').addEventListener('click', async () => {
     const w = await fetchJson('/api/worker/tick', { method: 'POST' });
     renderWorkerState(w);
+    showToast('Executed live market tick');
   });
 
   document.getElementById('btn-worker-reset').addEventListener('click', async () => {
-    const settings = getSettingsFromUI();
+    const s = getSettingsFromUI();
     const w = await fetchJson('/api/worker/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initialBalance: settings.initialBalance })
+      body: JSON.stringify({ initialBalance: s.initialBalance })
     });
     renderWorkerState(w);
+    showToast(`Paper wallet reset to $${s.initialBalance}`);
+  });
+
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyPreset(btn.dataset.preset);
+      showToast(`Applied ${btn.dataset.preset} preset`);
+    });
+  });
+
+  document.getElementById('btn-apply-settings').addEventListener('click', async () => {
+    const settings = getSettingsFromUI();
+    await fetchJson('/api/worker/configure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, timeframe: state.timeframe, strategyId: state.strategy, settings })
+    });
+    await Promise.all([loadMarket(), runBacktest(), scanSetups()]);
+    showToast('Settings applied & graphs updated');
+  });
+
+  document.getElementById('btn-reset-settings').addEventListener('click', async () => {
+    applyPreset('balanced');
+    await Promise.all([loadMarket(), runBacktest()]);
+    showToast('Settings restored to defaults');
+  });
+
+  document.getElementById('btn-scan-setups').addEventListener('click', scanSetups);
+  document.getElementById('btn-run-backtest').addEventListener('click', runBacktest);
+  document.getElementById('btn-refresh').addEventListener('click', async () => {
+    await Promise.all([loadMarket(), loadMtfMatrix(), refreshWorkerStatus(), scanSetups()]);
+    showToast('Dashboard data refreshed');
+  });
+
+  document.getElementById('btn-copy-webhook').addEventListener('click', () => {
+    navigator.clipboard?.writeText(document.getElementById('webhook-url').textContent);
+    showToast('Webhook URL copied');
+  });
+
+  document.getElementById('btn-copy-json').addEventListener('click', () => {
+    navigator.clipboard?.writeText(document.getElementById('webhook-json-preview').textContent);
+    showToast('Alert JSON copied');
+  });
+
+  document.getElementById('btn-sim-buy').addEventListener('click', () => quickPaperBuy(state.symbol));
+  document.getElementById('btn-sim-sell').addEventListener('click', async () => {
+    const res = await fetchJson('/api/webhook/tradingview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, action: 'SELL', timeframe: state.timeframe })
+    });
+    renderWorkerState(res.workerState);
+    showToast(`Test SELL alert executed on ${state.symbol}`);
   });
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(window.location.search);
   const urlSymbol = params.get('symbol');
-  const urlTab = params.get('tab');
-  if (urlSymbol) {
-    state.symbol = urlSymbol;
-    const selectEl = document.getElementById('symbol-select');
-    if (![...selectEl.options].some(o => o.value === state.symbol)) {
-      const opt = document.createElement('option');
-      opt.value = state.symbol;
-      opt.textContent = state.symbol;
-      selectEl.appendChild(opt);
-    }
-    selectEl.value = state.symbol;
-  }
+  const urlView = params.get('view');
+  if (urlSymbol) state.symbol = urlSymbol;
+  syncAssetPills();
 
   initCharts();
   bindEvents();
-  await Promise.all([loadMarket(), runBacktest(), refreshWorkerStatus(), scanSetups()]);
+  await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest(), refreshWorkerStatus(), scanSetups()]);
 
-  if (urlTab === 'tv') {
-    document.getElementById('tab-tv-widget').click();
-  }
-
+  if (urlView) switchView(urlView);
   setInterval(refreshWorkerStatus, 5000);
 });

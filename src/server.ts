@@ -195,10 +195,52 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       return true;
     }
 
+    if (url.pathname === '/api/mtf' && req.method === 'GET') {
+      const symbol = url.searchParams.get('symbol') || 'XAU/USD';
+      const tfs = ['15m', '1h', '4h', '1d'];
+      const matrix = await Promise.all(
+        tfs.map(async tf => {
+          try {
+            const candles = await exchange.fetchCandles(symbol, tf, 120);
+            const ema9 = TechnicalIndicators.getEMA(candles, 9);
+            const ema21 = TechnicalIndicators.getEMA(candles, 21);
+            const rsi = TechnicalIndicators.getRSI(candles, 14);
+            const adx = TechnicalIndicators.getADX(candles, 14);
+            const vwap = TechnicalIndicators.getSessionVWAP(candles);
+            const last = candles[candles.length - 1];
+            const f = ema9[ema9.length - 1] ?? last.close;
+            const s = ema21[ema21.length - 1] ?? last.close;
+            const v = vwap[vwap.length - 1]?.vwap ?? last.close;
+            const r = rsi[rsi.length - 1] ?? 50;
+            const a = adx[adx.length - 1]?.adx ?? 0;
+
+            let bias = 'NEUTRAL';
+            if (f > s && last.close >= v) bias = 'BULLISH';
+            else if (f < s && last.close < v) bias = 'BEARISH';
+
+            return {
+              timeframe: tf,
+              bias,
+              price: last.close,
+              vwap: Number(v.toFixed(2)),
+              rsi: Number(r.toFixed(1)),
+              adx: Number(a.toFixed(1)),
+              aboveVwap: last.close >= v,
+              emaBullish: f >= s
+            };
+          } catch {
+            return { timeframe: tf, bias: 'NEUTRAL', price: 0, vwap: 0, rsi: 50, adx: 0, aboveVwap: false, emaBullish: false };
+          }
+        })
+      );
+      sendJson(res, 200, { symbol, matrix });
+      return true;
+    }
+
     if (url.pathname === '/api/setups/scan' && req.method === 'GET') {
       const timeframe = url.searchParams.get('timeframe') || '1h';
       const settings = parseSettings(Object.fromEntries(url.searchParams.entries()));
-      const pairs = ['XAU/USD', 'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT'];
+      const pairs = ['XAU/USD', 'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT'];
       const model = new EmaVwapLiquidityStrategy(settings);
 
       const setups = await Promise.all(

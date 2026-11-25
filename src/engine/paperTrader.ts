@@ -23,6 +23,10 @@ export interface PaperWorkerState {
   cashBalance: number;
   lastPrice: number;
   equity: number;
+  realizedPnl: number;
+  winRate: number;
+  maxDailyLossPercent: number;
+  circuitBreakerTriggered: boolean;
   unrealizedPnl: number;
   unrealizedPnlPercent: number;
   position: Position | null;
@@ -52,6 +56,10 @@ export class PaperTrader {
     if (!this.state.settings) {
       this.state.settings = { ...DEFAULT_STRATEGY_SETTINGS };
     }
+    if (this.state.realizedPnl === undefined) this.state.realizedPnl = 0;
+    if (this.state.winRate === undefined) this.state.winRate = 0;
+    if (this.state.maxDailyLossPercent === undefined) this.state.maxDailyLossPercent = 5.0;
+    if (this.state.circuitBreakerTriggered === undefined) this.state.circuitBreakerTriggered = false;
     // Always start paused on fresh boot unless explicitly started
     this.state.running = false;
   }
@@ -75,6 +83,10 @@ export class PaperTrader {
       cashBalance: initialBalance,
       lastPrice: 0,
       equity: initialBalance,
+      realizedPnl: 0,
+      winRate: 0,
+      maxDailyLossPercent: 5.0,
+      circuitBreakerTriggered: false,
       unrealizedPnl: 0,
       unrealizedPnlPercent: 0,
       position: null,
@@ -216,9 +228,14 @@ export class PaperTrader {
   }
 
   private openLongPosition(price: number, atr: number, stopLoss?: number, takeProfit?: number, reason?: string): void {
+    if (this.state.circuitBreakerTriggered) {
+      this.appendLog('WARN', `Circuit Breaker active: blocked BUY @ $${price.toFixed(2)}. Reset or raise Max Daily Loss.`);
+      return;
+    }
     const sl = stopLoss ?? price - 2.0 * atr;
-    const tp = takeProfit ?? price + 4.0 * atr;
-    const riskCapital = this.state.cashBalance * 0.02;
+    const tp = takeProfit ?? price + (this.state.settings?.riskRewardRatio || 2.5) * 2.0 * atr;
+    const riskPct = (this.state.settings?.riskPerTradePercent || 2.0) / 100;
+    const riskCapital = this.state.cashBalance * riskPct;
     const stopDistance = Math.abs(price - sl);
     const rawCost = stopDistance > 0 ? (riskCapital / stopDistance) * price : this.state.cashBalance * 0.5;
     const allocatedCapital = Math.min(this.state.cashBalance * 0.95, Math.max(this.state.cashBalance * 0.25, rawCost));
@@ -280,6 +297,16 @@ export class PaperTrader {
       this.state.unrealizedPnl = 0;
       this.state.unrealizedPnlPercent = 0;
       this.state.equity = this.state.cashBalance;
+    }
+
+    const totalTrades = this.state.trades.length;
+    const wins = this.state.trades.filter(t => t.pnl > 0).length;
+    this.state.realizedPnl = this.state.trades.reduce((sum, t) => sum + t.pnl, 0);
+    this.state.winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+
+    const drawdownFromInitial = ((this.state.initialBalance - this.state.equity) / this.state.initialBalance) * 100;
+    if (drawdownFromInitial >= (this.state.maxDailyLossPercent || 5.0)) {
+      this.state.circuitBreakerTriggered = true;
     }
   }
 

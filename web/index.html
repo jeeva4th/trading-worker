@@ -3,318 +3,432 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Trading Worker — EMA VWAP Liquidity Dashboard</title>
+  <title>AetherQuant — EMA VWAP Liquidity Trading Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-dot"></span>
-      <span class="brand-title">TRADING WORKER</span>
-      <span class="brand-sub">EMA VWAP Liquidity Dashboard</span>
-    </div>
-
-    <div class="controls">
-      <div class="tv-url-bar">
-        <input id="tv-url-input" type="text" placeholder="Paste TradingView URL or Symbol (e.g. OANDA:XAUUSD)" />
-        <button id="btn-tv-analyze" class="btn btn-primary">Analyze URL</button>
+  <div class="app-shell">
+    <!-- Left Navigation Rail -->
+    <nav class="nav-rail" aria-label="Primary navigation">
+      <div class="rail-logo" title="AetherQuant Trading Worker">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M4 17L10 11L14 15L20 7" stroke="url(#grad)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="20" cy="7" r="2.2" fill="#38bdf8"/>
+          <defs>
+            <linearGradient id="grad" x1="4" y1="17" x2="20" y2="7" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#38bdf8"/>
+              <stop offset="1" stop-color="#a855f7"/>
+            </linearGradient>
+          </defs>
+        </svg>
       </div>
 
-      <div class="control-group">
-        <label for="symbol-select">Asset</label>
-        <select id="symbol-select">
-          <option value="XAU/USD" selected>XAU/USD (Gold)</option>
-          <option value="BTC/USDT">BTC/USDT</option>
-          <option value="ETH/USDT">ETH/USDT</option>
-          <option value="SOL/USDT">SOL/USDT</option>
-          <option value="BNB/USDT">BNB/USDT</option>
-          <option value="XRP/USDT">XRP/USDT</option>
-        </select>
+      <div class="rail-items">
+        <button class="rail-btn active" data-view="terminal" title="Charts & Execution Terminal">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 14l3-3 3 3 4-5"/></svg>
+          <span>Terminal</span>
+        </button>
+        <button class="rail-btn" data-view="scanner" title="Multi-Asset Setups Scanner">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 12l4-4"/><circle cx="12" cy="12" r="2"/></svg>
+          <span>Scanner</span>
+        </button>
+        <button class="rail-btn" data-view="analytics" title="Backtest & Trade Ledger">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7"/><rect x="12" y="6" width="3" height="11"/><rect x="17" y="13" width="3" height="4"/></svg>
+          <span>Analytics</span>
+        </button>
+        <button class="rail-btn" data-view="studio" title="Strategy Studio & Webhooks">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1z"/></svg>
+          <span>Studio</span>
+        </button>
+        <button class="rail-btn" data-view="tvpro" title="TradingView Pro Superchart">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h4l3-7 4 14 3-7h6"/></svg>
+          <span>TV Pro</span>
+        </button>
       </div>
 
-      <div class="timeframe-pills" id="timeframe-pills">
-        <button class="pill" data-tf="5m">5m</button>
-        <button class="pill" data-tf="15m">15m</button>
-        <button class="pill active" data-tf="1h">1h</button>
-        <button class="pill" data-tf="4h">4h</button>
-        <button class="pill" data-tf="1d">1d</button>
+      <div class="rail-footer">
+        <div class="live-indicator" id="rail-live-dot" title="Exchange Feed Connected"></div>
       </div>
+    </nav>
 
-      <div class="control-group">
-        <label for="strategy-select">Model</label>
-        <select id="strategy-select">
-          <option value="ema_vwap_liquidity" selected>EMA VWAP Liquidity Reaction</option>
-          <option value="adaptive">Adaptive Regime (ADX + 200 EMA)</option>
-          <option value="trend">EMA Trend Following + RSI</option>
-          <option value="reversion">Bollinger Bands + RSI Reversion</option>
-        </select>
-      </div>
-
-      <div class="view-tabs">
-        <button id="tab-strategy-chart" class="tab-btn active">All Graphs</button>
-        <button id="tab-tv-widget" class="tab-btn">TradingView Pro</button>
-      </div>
-
-      <button id="btn-run-backtest" class="btn btn-primary">Run Backtest</button>
-      <button id="btn-refresh" class="btn btn-ghost" title="Refresh all graphs">↻</button>
-    </div>
-  </header>
-
-  <section class="telemetry-strip">
-    <div class="metric-box">
-      <span class="metric-label" id="metric-symbol">XAU/USD</span>
-      <span class="metric-value price" id="metric-price">—</span>
-      <span class="metric-sub" id="metric-change">—</span>
-    </div>
-    <div class="metric-box">
-      <span class="metric-label">Market Regime (ADX)</span>
-      <span class="regime-badge" id="metric-regime">LOADING...</span>
-      <span class="metric-sub" id="metric-adx">ADX: — | RSI: —</span>
-    </div>
-    <div class="metric-box">
-      <span class="metric-label">VWAP & Macro Anchor</span>
-      <span class="metric-value" id="metric-vwap">—</span>
-      <span class="metric-sub" id="metric-ema200">200 EMA: — | ATR: —</span>
-    </div>
-    <div class="metric-box">
-      <span class="metric-label">Setup Signal & Score</span>
-      <div class="signal-row">
-        <span class="signal-pill hold" id="metric-signal">HOLD</span>
-        <span class="score-pill" id="metric-score">0%</span>
-      </div>
-      <span class="metric-sub truncate" id="metric-signal-reason">Evaluating liquidity pools...</span>
-    </div>
-    <div class="metric-box">
-      <span class="metric-label">Paper Worker Equity</span>
-      <span class="metric-value" id="metric-equity">$10,000.00</span>
-      <span class="metric-sub" id="metric-unrealized">Unrealized: $0.00</span>
-    </div>
-  </section>
-
-  <main class="workspace">
-    <section class="charts-column">
-      <!-- All Graphs View -->
-      <div class="graphs-stack" id="strategy-chart-panel">
-        <!-- Graph 1: Price + EMAs + VWAP + Liquidity Pools -->
-        <div class="chart-card">
-          <div class="chart-header">
-            <div class="legend">
-              <label class="leg-toggle"><input type="checkbox" id="toggle-emas" checked /><i class="dot ema9"></i>EMA 9/21/200</label>
-              <label class="leg-toggle"><input type="checkbox" id="toggle-vwap" checked /><i class="dot vwap"></i>Session VWAP + Bands</label>
-              <label class="leg-toggle"><input type="checkbox" id="toggle-liquidity" checked /><i class="dot bsl"></i>BSL / SSL Liquidity</label>
-              <span class="leg-item"><i class="dot buy"></i>Entry</span>
-              <span class="leg-item"><i class="dot sell"></i>Exit</span>
-            </div>
-            <span class="chart-status" id="chart-status">Ready</span>
-          </div>
-          <div id="tv-lightweight-chart" class="chart-container"></div>
-        </div>
-
-        <!-- Graph 2 & 3: Oscillator + Equity/Drawdown Grid -->
-        <div class="subgraphs-grid">
-          <div class="chart-card">
-            <div class="subgraph-header">
-              <span>Momentum & Trend Strength Graph (RSI 14 / ADX 14)</span>
-              <span class="legend-inline">
-                <i class="dot ema9"></i>RSI
-                <i class="dot ema21"></i>ADX
-              </span>
-            </div>
-            <div id="oscillator-chart" class="subgraph-container"></div>
+    <!-- Main Workspace Area -->
+    <div class="main-shell">
+      <!-- Top Command Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="brand-badge">
+            <span class="brand-name">AetherQuant</span>
+            <span class="model-chip">EMA · VWAP · LIQUIDITY</span>
           </div>
 
-          <div class="chart-card">
-            <div class="subgraph-header">
-              <span>Equity Curve ($) & Drawdown (%)</span>
-              <span id="equity-summary">—</span>
-            </div>
-            <div id="equity-chart" class="subgraph-container"></div>
+          <div class="command-search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input id="tv-url-input" type="text" placeholder="Paste TradingView URL or Symbol (e.g. OANDA:XAUUSD)..." />
+            <button id="btn-tv-analyze" class="chip-btn">Analyze</button>
           </div>
         </div>
 
-        <!-- Multi-Asset Setups Scanner -->
-        <div class="chart-card scanner-card">
-          <div class="subgraph-header">
-            <span>Live Setups Scanner (EMA VWAP Liquidity Reaction across Markets)</span>
-            <button id="btn-scan-setups" class="btn btn-ghost btn-sm">Scan All Markets</button>
+        <div class="topbar-right">
+          <div class="asset-pills" id="asset-pills">
+            <button class="asset-pill active" data-sym="XAU/USD">XAU/USD</button>
+            <button class="asset-pill" data-sym="BTC/USDT">BTC</button>
+            <button class="asset-pill" data-sym="ETH/USDT">ETH</button>
+            <button class="asset-pill" data-sym="SOL/USDT">SOL</button>
+            <button class="asset-pill" data-sym="BNB/USDT">BNB</button>
           </div>
-          <div class="scanner-table-wrap">
-            <table class="scanner-table">
+
+          <div class="segmented" id="timeframe-pills">
+            <button class="seg-btn" data-tf="5m">5m</button>
+            <button class="seg-btn" data-tf="15m">15m</button>
+            <button class="seg-btn active" data-tf="1h">1h</button>
+            <button class="seg-btn" data-tf="4h">4h</button>
+            <button class="seg-btn" data-tf="1d">1d</button>
+          </div>
+
+          <select id="strategy-select" class="glass-select">
+            <option value="ema_vwap_liquidity" selected>EMA VWAP Liquidity Model</option>
+            <option value="adaptive">Adaptive Regime (ADX + 200 EMA)</option>
+            <option value="trend">EMA Trend Following + RSI</option>
+            <option value="reversion">Bollinger + RSI Reversion</option>
+          </select>
+
+          <div class="bot-status-pill" id="header-bot-pill">
+            <span class="pulse-dot"></span>
+            <span id="header-bot-text">STANDBY</span>
+          </div>
+
+          <button id="btn-refresh" class="icon-btn" title="Refresh All Data">↻</button>
+        </div>
+      </header>
+
+      <!-- Hero KPI Ribbon -->
+      <section class="kpi-ribbon">
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label" id="metric-symbol">XAU/USD · GOLD</span>
+            <span class="change-badge" id="metric-change">0.00%</span>
+          </div>
+          <div class="kpi-val mono" id="metric-price">$—</div>
+          <div class="kpi-sub" id="metric-vwap">Session VWAP: $—</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Multi-Timeframe Bias</span>
+            <span class="regime-tag" id="metric-regime">LOADING</span>
+          </div>
+          <div class="mtf-matrix" id="mtf-matrix">
+            <span class="mtf-chip">15m —</span>
+            <span class="mtf-chip">1h —</span>
+            <span class="mtf-chip">4h —</span>
+            <span class="mtf-chip">1d —</span>
+          </div>
+          <div class="kpi-sub mono" id="metric-adx">ADX: — · RSI: — · ATR: —</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Liquidity Reaction Signal</span>
+            <span class="signal-tag hold" id="metric-signal">HOLD</span>
+          </div>
+          <div class="kpi-val-sm" id="metric-signal-reason">Scanning SSL &amp; VWAP...</div>
+          <div class="kpi-sub mono" id="metric-ema200">200 EMA Anchor: $—</div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Paper Bot Equity</span>
+            <span class="kpi-sub mono" id="metric-winrate">WR: 0%</span>
+          </div>
+          <div class="kpi-val mono" id="metric-equity">$10,000.00</div>
+          <div class="kpi-sub mono" id="metric-unrealized">Unrealized: $0.00</div>
+        </div>
+      </section>
+
+      <!-- VIEW 1: TERMINAL (ALL GRAPHS + EXECUTION) -->
+      <section class="view-pane active" id="view-terminal">
+        <div class="terminal-grid">
+          <!-- Charts Stack -->
+          <div class="charts-stack">
+            <div class="glass-card chart-wrap">
+              <div class="card-toolbar">
+                <div class="layer-toggles">
+                  <label class="toggle-chip"><input type="checkbox" id="toggle-emas" checked /><span class="swatch cyan"></span>EMAs (9/21/200)</label>
+                  <label class="toggle-chip"><input type="checkbox" id="toggle-vwap" checked /><span class="swatch gold"></span>Session VWAP &amp; Bands</label>
+                  <label class="toggle-chip"><input type="checkbox" id="toggle-liquidity" checked /><span class="swatch pink"></span>BSL / SSL Pools</label>
+                </div>
+                <span class="toolbar-meta" id="chart-status">Syncing market feed...</span>
+              </div>
+              <div id="tv-lightweight-chart" class="main-chart"></div>
+            </div>
+
+            <div class="subcharts-grid">
+              <div class="glass-card">
+                <div class="card-toolbar">
+                  <span>Momentum &amp; Trend Oscillator (RSI 14 / ADX 14)</span>
+                  <div class="mini-legend">
+                    <span><i class="swatch cyan"></i>RSI</span>
+                    <span><i class="swatch amber"></i>ADX</span>
+                  </div>
+                </div>
+                <div id="oscillator-chart" class="sub-chart"></div>
+              </div>
+
+              <div class="glass-card">
+                <div class="card-toolbar">
+                  <span>Portfolio Equity ($) &amp; Drawdown (%)</span>
+                  <span class="toolbar-meta mono" id="equity-summary">—</span>
+                </div>
+                <div id="equity-chart" class="sub-chart"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Execution & Setup Sidebar -->
+          <aside class="exec-sidebar">
+            <!-- Confluence Gauge & Setup Card -->
+            <div class="glass-card pad">
+              <div class="card-head">
+                <div>
+                  <h3>Setup Confluence</h3>
+                  <span class="muted">EMA · VWAP · Liquidity Sweep</span>
+                </div>
+                <div class="gauge-wrap">
+                  <svg class="gauge" viewBox="0 0 44 44">
+                    <circle class="gauge-bg" cx="22" cy="22" r="18"/>
+                    <circle class="gauge-fill" id="setup-gauge-ring" cx="22" cy="22" r="18" stroke-dasharray="113.1" stroke-dashoffset="113.1"/>
+                  </svg>
+                  <span class="gauge-text mono" id="setup-score-badge">0%</span>
+                </div>
+              </div>
+
+              <div class="check-pills">
+                <div class="check-pill" id="chk-ema"><span>EMA Structure</span><strong>WAIT</strong></div>
+                <div class="check-pill" id="chk-vwap"><span>VWAP Reaction</span><strong>WAIT</strong></div>
+                <div class="check-pill" id="chk-sweep"><span>Liquidity Sweep</span><strong>WAIT</strong></div>
+                <div class="check-pill" id="chk-wick"><span>Rejection Wick</span><strong>WAIT</strong></div>
+              </div>
+
+              <div class="levels-grid mono">
+                <div class="lvl-box"><span>SSL (Low)</span><strong id="setup-ssl">—</strong></div>
+                <div class="lvl-box"><span>Session VWAP</span><strong id="setup-vwap">—</strong></div>
+                <div class="lvl-box"><span>BSL (High)</span><strong id="setup-bsl">—</strong></div>
+                <div class="lvl-box"><span>Stop Loss</span><strong class="red" id="setup-sl">—</strong></div>
+                <div class="lvl-box"><span>Take Profit</span><strong class="green" id="setup-tp">—</strong></div>
+                <div class="lvl-box"><span>Sweep State</span><strong id="setup-sweep-type">NONE</strong></div>
+              </div>
+            </div>
+
+            <!-- Automated Bot & Manual Order Ticket -->
+            <div class="glass-card pad">
+              <div class="card-head">
+                <div>
+                  <h3>Bot &amp; Paper Execution</h3>
+                  <span class="muted" id="worker-strategy-label">EMA VWAP Liquidity Model</span>
+                </div>
+                <span class="status-badge" id="worker-badge">STOPPED</span>
+              </div>
+
+              <div class="order-buttons">
+                <button id="btn-take-setup" class="btn btn-buy">BUY LONG</button>
+                <button id="btn-close-setup" class="btn btn-sell">SELL / CLOSE</button>
+              </div>
+
+              <div class="bot-controls">
+                <button id="btn-worker-start" class="btn btn-primary">▶ Start Auto-Bot</button>
+                <button id="btn-worker-stop" class="btn btn-ghost" disabled>■ Stop</button>
+                <button id="btn-worker-tick" class="btn btn-ghost">Tick</button>
+                <button id="btn-worker-reset" class="btn btn-ghost">Reset</button>
+              </div>
+
+              <div class="balance-row mono">
+                <div><span>Cash</span><strong id="worker-cash">$10,000.00</strong></div>
+                <div><span>Realized PnL</span><strong id="worker-realized">$0.00</strong></div>
+              </div>
+
+              <div class="position-card" id="position-box">
+                <div class="empty-msg">Flat — Waiting for liquidity setup</div>
+              </div>
+
+              <div class="section-label">Live Bot Feed</div>
+              <div class="feed-list" id="worker-logs"></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- VIEW 2: MULTI-ASSET SETUPS SCANNER -->
+      <section class="view-pane" id="view-scanner">
+        <div class="glass-card pad">
+          <div class="card-head">
+            <div>
+              <h2>Live Setups &amp; Liquidity Scanner</h2>
+              <span class="muted">Real-time confluence scoring across Gold &amp; Crypto pairs</span>
+            </div>
+            <button id="btn-scan-setups" class="btn btn-primary">↻ Scan All Markets</button>
+          </div>
+          <div class="table-wrap">
+            <table class="modern-table">
               <thead>
                 <tr>
                   <th>Asset</th>
                   <th>Price</th>
                   <th>Confluence</th>
-                  <th>Sweep</th>
-                  <th>SSL / BSL Liquidity</th>
-                  <th>VWAP</th>
+                  <th>Liquidity Sweep</th>
+                  <th>SSL / BSL Levels</th>
+                  <th>Session VWAP</th>
                   <th>Signal</th>
-                  <th>Action</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="scanner-tbody">
-                <tr><td colspan="8" class="pos-empty">Loading live setups...</td></tr>
+                <tr><td colspan="8" class="empty-msg">Scanning markets...</td></tr>
               </tbody>
             </table>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- TradingView Pro Widget View -->
-      <div class="chart-card hidden" id="tv-widget-panel">
-        <div id="tradingview_pro_widget" class="tv-pro-container"></div>
-      </div>
-    </section>
-
-    <aside class="sidebar">
-      <!-- Live Setup & Confluence Card -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Active Setup & Liquidity</h2>
-          <span class="score-pill" id="setup-score-badge">0%</span>
-        </div>
-
-        <div class="checklist-grid">
-          <div class="check-item" id="chk-ema"><span>EMA Structure</span><strong>—</strong></div>
-          <div class="check-item" id="chk-vwap"><span>VWAP Reaction</span><strong>—</strong></div>
-          <div class="check-item" id="chk-sweep"><span>Liquidity Sweep</span><strong>—</strong></div>
-          <div class="check-item" id="chk-wick"><span>Rejection Wick</span><strong>—</strong></div>
-        </div>
-
-        <div class="setup-levels">
-          <div class="lvl"><span>SSL (Swing Low)</span><strong id="setup-ssl">—</strong></div>
-          <div class="lvl"><span>Session VWAP</span><strong id="setup-vwap">—</strong></div>
-          <div class="lvl"><span>BSL (Swing High)</span><strong id="setup-bsl">—</strong></div>
-          <div class="lvl"><span>Suggested SL</span><strong class="pos-text-red" id="setup-sl">—</strong></div>
-          <div class="lvl"><span>Suggested TP</span><strong class="pos-text-green" id="setup-tp">—</strong></div>
-          <div class="lvl"><span>Sweep Event</span><strong id="setup-sweep-type">NONE</strong></div>
-        </div>
-
-        <div class="worker-actions">
-          <button id="btn-take-setup" class="btn btn-success">⚡ Paper Trade Setup</button>
-          <button id="btn-close-setup" class="btn btn-danger">Close Position</button>
-        </div>
-      </div>
-
-      <!-- Strategy Settings Card -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Strategy Settings</h2>
-          <button id="btn-reset-settings" class="btn btn-ghost btn-sm">Defaults</button>
-        </div>
-
-        <div class="settings-grid">
-          <label class="field">
-            <span>Fast EMA</span>
-            <input type="number" id="set-fast-ema" value="9" min="2" max="100" />
-          </label>
-          <label class="field">
-            <span>Slow EMA</span>
-            <input type="number" id="set-slow-ema" value="21" min="5" max="200" />
-          </label>
-          <label class="field">
-            <span>Macro EMA</span>
-            <input type="number" id="set-macro-ema" value="200" min="20" max="500" />
-          </label>
-          <label class="field">
-            <span>Liq. Lookback</span>
-            <input type="number" id="set-lookback" value="20" min="5" max="100" />
-          </label>
-          <label class="field">
-            <span>Min Wick (0-1)</span>
-            <input type="number" id="set-wick" value="0.35" step="0.05" min="0.05" max="0.9" />
-          </label>
-          <label class="field">
-            <span>Risk % / Trade</span>
-            <input type="number" id="set-risk" value="2.0" step="0.25" min="0.25" max="10" />
-          </label>
-          <label class="field">
-            <span>Target R:R</span>
-            <input type="number" id="set-rr" value="2.5" step="0.25" min="1.0" max="10" />
-          </label>
-          <label class="field">
-            <span>Initial Capital ($)</span>
-            <input type="number" id="set-capital" value="10000" step="500" min="100" />
-          </label>
-        </div>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="set-trailing" checked />
-          <span>Enable Chandelier ATR Trailing Stop</span>
-        </label>
-
-        <button id="btn-apply-settings" class="btn btn-primary full-width">Apply Settings & Update Graphs</button>
-      </div>
-
-      <!-- Paper Trading Worker Card -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Paper Trading Worker</h2>
-          <span class="worker-status-dot" id="worker-badge">STOPPED</span>
-        </div>
-        <div class="worker-actions">
-          <button id="btn-worker-start" class="btn btn-success">▶ Start Worker</button>
-          <button id="btn-worker-stop" class="btn btn-danger" disabled>■ Stop</button>
-          <button id="btn-worker-tick" class="btn btn-ghost">Tick Now</button>
-          <button id="btn-worker-reset" class="btn btn-ghost">Reset $10k</button>
-        </div>
-
-        <div class="stats-grid">
-          <div class="stat">
-            <span>Cash Balance</span>
-            <strong id="worker-cash">$10,000.00</strong>
+      <!-- VIEW 3: BACKTEST & QUANT ANALYTICS -->
+      <section class="view-pane" id="view-analytics">
+        <div class="analytics-kpis">
+          <div class="glass-card pad">
+            <span class="kpi-label">Total Strategy Return</span>
+            <strong class="big-stat mono" id="bt-return">—</strong>
           </div>
-          <div class="stat">
-            <span>Total Equity</span>
-            <strong id="worker-equity">$10,000.00</strong>
+          <div class="glass-card pad">
+            <span class="kpi-label">Win Rate</span>
+            <strong class="big-stat mono" id="bt-winrate">—</strong>
+          </div>
+          <div class="glass-card pad">
+            <span class="kpi-label">Profit Factor</span>
+            <strong class="big-stat mono" id="bt-pf">—</strong>
+          </div>
+          <div class="glass-card pad">
+            <span class="kpi-label">Max Drawdown</span>
+            <strong class="big-stat mono" id="bt-dd">—</strong>
           </div>
         </div>
 
-        <div class="position-box" id="position-box">
-          <div class="pos-empty">No open position (Flat)</div>
-        </div>
-
-        <div class="webhook-url-box">
-          <span class="metric-label">TradingView Webhook (POST)</span>
-          <code id="webhook-url">http://localhost:3000/api/webhook/tradingview</code>
-        </div>
-
-        <div class="panel-subheader">Worker Log</div>
-        <div class="log-list" id="worker-logs"></div>
-      </div>
-
-      <!-- Backtest Summary Card -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2>Backtest Performance</h2>
-          <span class="metric-sub" id="bt-trade-count-label">0 trades</span>
-        </div>
-        <div class="stats-grid">
-          <div class="stat">
-            <span>Return</span>
-            <strong id="bt-return">—</strong>
+        <div class="glass-card pad">
+          <div class="card-head">
+            <div>
+              <h2>Simulated Backtest Trade Ledger (<span id="bt-trade-count">0</span> Trades)</h2>
+              <span class="muted">Verified historical executions with ATR stop &amp; trailing logic</span>
+            </div>
+            <button id="btn-run-backtest" class="btn btn-primary">▶ Re-Run Backtest</button>
           </div>
-          <div class="stat">
-            <span>Win Rate</span>
-            <strong id="bt-winrate">—</strong>
-          </div>
-          <div class="stat">
-            <span>Profit Factor</span>
-            <strong id="bt-pf">—</strong>
-          </div>
-          <div class="stat">
-            <span>Max Drawdown</span>
-            <strong id="bt-dd">—</strong>
+          <div class="table-wrap">
+            <table class="modern-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Direction</th>
+                  <th>Entry Price</th>
+                  <th>Exit Price</th>
+                  <th>PnL ($)</th>
+                  <th>Return (%)</th>
+                  <th>Exit Reason</th>
+                </tr>
+              </thead>
+              <tbody id="bt-trades-tbody">
+                <tr><td colspan="7" class="empty-msg">Run backtest to view trade ledger...</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
+      </section>
 
-        <div class="panel-subheader">Executed Backtest Trades (<span id="bt-trade-count">0</span>)</div>
-        <div class="trades-list" id="bt-trades"></div>
-      </div>
-    </aside>
-  </main>
+      <!-- VIEW 4: STRATEGY STUDIO & WEBHOOKS -->
+      <section class="view-pane" id="view-studio">
+        <div class="studio-grid">
+          <div class="glass-card pad">
+            <div class="card-head">
+              <div>
+                <h2>Strategy Studio &amp; Risk Controls</h2>
+                <span class="muted">Tune parameters &amp; risk guardrails for graphs and live bot</span>
+              </div>
+              <button id="btn-reset-settings" class="btn btn-ghost">Reset Defaults</button>
+            </div>
+
+            <div class="preset-row">
+              <button class="preset-btn" data-preset="conservative">Conservative Institutional</button>
+              <button class="preset-btn active" data-preset="balanced">Balanced Intraday</button>
+              <button class="preset-btn" data-preset="aggressive">Aggressive Scalp</button>
+            </div>
+
+            <div class="studio-fields">
+              <label class="studio-field"><span>Fast EMA Period</span><input type="number" id="set-fast-ema" value="9" min="2" max="100" /></label>
+              <label class="studio-field"><span>Slow EMA Period</span><input type="number" id="set-slow-ema" value="21" min="5" max="200" /></label>
+              <label class="studio-field"><span>Macro Trend EMA</span><input type="number" id="set-macro-ema" value="200" min="20" max="500" /></label>
+              <label class="studio-field"><span>Liquidity Lookback</span><input type="number" id="set-lookback" value="20" min="5" max="100" /></label>
+              <label class="studio-field"><span>Min Rejection Wick</span><input type="number" id="set-wick" value="0.35" step="0.05" min="0.05" max="0.9" /></label>
+              <label class="studio-field"><span>Risk % / Trade</span><input type="number" id="set-risk" value="2.0" step="0.25" min="0.25" max="10" /></label>
+              <label class="studio-field"><span>Target R:R Ratio</span><input type="number" id="set-rr" value="2.5" step="0.25" min="1.0" max="10" /></label>
+              <label class="studio-field"><span>Initial Capital ($)</span><input type="number" id="set-capital" value="10000" step="500" min="100" /></label>
+            </div>
+
+            <label class="switch-row">
+              <input type="checkbox" id="set-trailing" checked />
+              <span>Enable Chandelier ATR Trailing Stop (Lock in trend profits)</span>
+            </label>
+
+            <button id="btn-apply-settings" class="btn btn-primary full-width">Save Settings, Update Graphs &amp; Sync Bot</button>
+          </div>
+
+          <div class="glass-card pad">
+            <div class="card-head">
+              <div>
+                <h2>TradingView Webhook Bridge</h2>
+                <span class="muted">Receive real TradingView Pine Script alerts directly</span>
+              </div>
+              <span class="status-badge running">LISTENING</span>
+            </div>
+
+            <div class="code-box">
+              <div class="code-top">
+                <span>Webhook POST Endpoint</span>
+                <button class="chip-btn" id="btn-copy-webhook">Copy URL</button>
+              </div>
+              <code id="webhook-url">http://localhost:3000/api/webhook/tradingview</code>
+            </div>
+
+            <div class="code-box">
+              <div class="code-top">
+                <span>TradingView Alert JSON Payload</span>
+                <button class="chip-btn" id="btn-copy-json">Copy JSON</button>
+              </div>
+              <pre id="webhook-json-preview">{
+  "symbol": "{{exchange}}:{{ticker}}",
+  "action": "BUY",
+  "timeframe": "{{interval}}"
+}</pre>
+            </div>
+
+            <div class="order-buttons">
+              <button id="btn-sim-buy" class="btn btn-buy">Test TV BUY Alert</button>
+              <button id="btn-sim-sell" class="btn btn-sell">Test TV SELL Alert</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: TRADINGVIEW PRO SUPERCHART -->
+      <section class="view-pane" id="view-tvpro">
+        <div class="glass-card tvpro-card">
+          <div id="tradingview_pro_widget" class="tv-pro-container"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
 
   <script src="/app.js"></script>
 </body>
