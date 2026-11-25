@@ -10,7 +10,7 @@ import { createStrategy, EmaVwapLiquidityStrategy, STRATEGY_CATALOG } from './st
 import { Candle, DEFAULT_STRATEGY_SETTINGS, StrategyId, StrategySettings } from './types';
 import { parseTradingViewInput } from './utils/tradingviewParser';
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3456);
 const WEB_DIR = path.join(process.cwd(), 'web');
 
 const exchange = new ExchangeConnector('binance');

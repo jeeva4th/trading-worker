@@ -713,6 +713,9 @@ function bindEvents() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
+  const webhookEl = document.getElementById('webhook-url');
+  if (webhookEl) webhookEl.textContent = `${window.location.origin}/api/webhook/tradingview`;
+
   const params = new URLSearchParams(window.location.search);
   const urlSymbol = params.get('symbol');
   const urlView = params.get('view');
