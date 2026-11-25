@@ -1,38 +1,56 @@
 import { Strategy, Candle, Position, TradeRecord, BacktestResult } from '../types';
+import { TechnicalIndicators } from '../indicators';
 
 export class BacktestEngine {
   constructor(
     private strategy: Strategy,
     private initialBalance: number = 10000,
-    private riskPerTradePercent: number = 2.0 // risk 2% of equity per trade
+    private riskPerTradePercent: number = 2.0,
+    private useTrailingStop: boolean = true
   ) {}
 
   run(candles: Candle[], symbol: string): BacktestResult {
     let balance = this.initialBalance;
     let peakBalance = this.initialBalance;
     let maxDrawdown = 0;
-    let position: Position | null = null;
+    let position: (Position & { highestSinceEntry?: number }) | null = null;
     const trades: TradeRecord[] = [];
 
-    // Warm-up window of 30 candles for indicator stability
-    const warmUp = 30;
+    const atrValues = TechnicalIndicators.getATR(candles, 14);
+
+    // Warm-up window of 50 candles for 200 EMA & indicators
+    const warmUp = Math.min(60, Math.floor(candles.length / 4));
 
     for (let i = warmUp; i < candles.length; i++) {
       const slice = candles.slice(0, i + 1);
       const currentCandle = candles[i];
+      const currentAtr = atrValues[i] || (currentCandle.close * 0.02);
       const signal = this.strategy.analyze(slice);
 
-      // Check current position exit conditions (Stop-Loss / Take-Profit)
+      // 1. Manage Active Position
       if (position) {
+        // Update highest price seen since entry for trailing stop
+        if (!position.highestSinceEntry || currentCandle.high > position.highestSinceEntry) {
+          position.highestSinceEntry = currentCandle.high;
+        }
+
+        // Dynamic Chandelier Trailing Stop
+        if (this.useTrailingStop) {
+          const trailingStop = position.highestSinceEntry - (1.8 * currentAtr);
+          if (position.stopLoss === undefined || trailingStop > position.stopLoss) {
+            position.stopLoss = trailingStop;
+          }
+        }
+
         let shouldExit = false;
         let exitReason = '';
 
         if (position.stopLoss && currentCandle.low <= position.stopLoss) {
           shouldExit = true;
-          exitReason = 'Stop Loss Hit';
+          exitReason = 'Trailing Stop Hit';
         } else if (position.takeProfit && currentCandle.high >= position.takeProfit) {
           shouldExit = true;
-          exitReason = 'Take Profit Hit';
+          exitReason = 'Take Profit Target Reached';
         } else if (signal.type === 'SELL') {
           shouldExit = true;
           exitReason = signal.reason;
@@ -43,7 +61,7 @@ export class BacktestEngine {
           const pnl = (exitPrice - position.entryPrice) * position.amount;
           const pnlPercent = ((exitPrice - position.entryPrice) / position.entryPrice) * 100;
 
-          balance += position.amount * position.entryPrice + pnl;
+          balance += (position.amount * position.entryPrice) + pnl;
 
           trades.push({
             entryTime: position.entryTime,
@@ -61,38 +79,46 @@ export class BacktestEngine {
         }
       }
 
-      // Check entry conditions
+      // 2. Evaluate New Entry
       if (!position && signal.type === 'BUY') {
         const capitalToRisk = balance * (this.riskPerTradePercent / 100);
-        const positionCapital = Math.min(balance * 0.95, capitalToRisk * 5); // 5x leverage equivalent allocation or cash limit
-        const amount = positionCapital / signal.price;
+        // Volatility-adjusted sizing
+        const stopDistance = signal.stopLoss ? Math.abs(signal.price - signal.stopLoss) : (currentAtr * 2);
+        const sharesToBuy = stopDistance > 0 ? capitalToRisk / stopDistance : 0;
+        const totalCost = sharesToBuy * signal.price;
 
-        if (amount > 0 && balance >= positionCapital) {
-          balance -= positionCapital;
+        // Allocate up to 95% of available liquid cash
+        const maxCapital = balance * 0.95;
+        const allocatedCapital = Math.min(maxCapital, Math.max(balance * 0.25, totalCost));
+        const amount = allocatedCapital / signal.price;
+
+        if (amount > 0 && balance >= allocatedCapital) {
+          balance -= allocatedCapital;
           position = {
             symbol,
             entryPrice: signal.price,
             amount,
             entryTime: currentCandle.timestamp,
             stopLoss: signal.stopLoss,
-            takeProfit: signal.takeProfit
+            takeProfit: signal.takeProfit,
+            highestSinceEntry: signal.price
           };
         }
       }
 
-      // Track equity and max drawdown
+      // 3. Track Equity Curve & Drawdown
       const currentEquity = balance + (position ? position.amount * currentCandle.close : 0);
       if (currentEquity > peakBalance) peakBalance = currentEquity;
       const drawdown = ((peakBalance - currentEquity) / peakBalance) * 100;
       if (drawdown > maxDrawdown) maxDrawdown = drawdown;
     }
 
-    // Close remaining open position at last candle
+    // Close remaining open position at backtest end
     if (position) {
       const lastCandle = candles[candles.length - 1];
       const pnl = (lastCandle.close - position.entryPrice) * position.amount;
       const pnlPercent = ((lastCandle.close - position.entryPrice) / position.entryPrice) * 100;
-      balance += position.amount * position.entryPrice + pnl;
+      balance += (position.amount * position.entryPrice) + pnl;
       trades.push({
         entryTime: position.entryTime,
         exitTime: lastCandle.timestamp,
@@ -102,7 +128,7 @@ export class BacktestEngine {
         pnl,
         pnlPercent,
         type: 'LONG',
-        exitReason: 'Backtest End Close'
+        exitReason: 'Backtest Period Ended'
       });
     }
 
@@ -110,7 +136,7 @@ export class BacktestEngine {
     const losing = trades.filter(t => t.pnl <= 0);
     const grossProfit = winning.reduce((acc, t) => acc + t.pnl, 0);
     const grossLoss = Math.abs(losing.reduce((acc, t) => acc + t.pnl, 0));
-    const profitFactor = grossLoss === 0 ? grossProfit : grossProfit / grossLoss;
+    const profitFactor = grossLoss === 0 ? (grossProfit > 0 ? 99.9 : 0) : grossProfit / grossLoss;
 
     return {
       symbol,

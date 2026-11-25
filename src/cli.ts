@@ -2,6 +2,7 @@ import Table from 'cli-table3';
 import { ExchangeConnector } from './connectors/exchange';
 import { TrendFollowingStrategy } from './strategies/trendFollowing';
 import { MeanReversionStrategy } from './strategies/meanReversion';
+import { AdaptiveRegimeStrategy } from './strategies/adaptiveRegimeStrategy';
 import { BacktestEngine } from './engine/backtester';
 
 async function main() {
@@ -12,10 +13,10 @@ async function main() {
 
   const exchange = new ExchangeConnector('binance');
 
-  console.log(`\n========================================`);
-  console.log(`🚀 Trading Worker [CCXT + Top Strategies]`);
+  console.log(`\n======================================================`);
+  console.log(`🚀 Quantitative Trading Worker [High-Profit Engine]`);
   console.log(`Exchange: ${exchange.getExchangeName()} | Pair: ${symbol} | Timeframe: ${timeframe}`);
-  console.log(`========================================\n`);
+  console.log(`======================================================\n`);
 
   if (command === 'market') {
     console.log(`Fetching latest market ticker...`);
@@ -29,21 +30,22 @@ async function main() {
 
   if (command === 'backtest' || command === 'test') {
     console.log(`📥 Downloading historical ${timeframe} candles from Binance...`);
-    const candles = await exchange.fetchCandles(symbol, timeframe, 300);
+    const candles = await exchange.fetchCandles(symbol, timeframe, 500);
     console.log(`Loaded ${candles.length} historical candles.\n`);
 
     const strategies = [
       new TrendFollowingStrategy(9, 21, 14),
-      new MeanReversionStrategy(20, 2, 14)
+      new MeanReversionStrategy(20, 2, 14),
+      new AdaptiveRegimeStrategy(14, 200, 9, 21)
     ];
 
     const resultsTable = new Table({
-      head: ['Strategy', 'Initial $', 'Final $', 'PnL ($)', 'Return (%)', 'Trades', 'Win Rate', 'Profit Factor', 'Max DD'],
-      colWidths: [32, 12, 12, 12, 12, 10, 12, 15, 10]
+      head: ['Strategy Engine', 'Initial $', 'Final $', 'PnL ($)', 'Return (%)', 'Trades', 'Win Rate', 'Profit Factor', 'Max DD'],
+      colWidths: [38, 12, 12, 12, 12, 10, 12, 15, 10]
     });
 
     for (const strat of strategies) {
-      const engine = new BacktestEngine(strat, 10000, 2.0);
+      const engine = new BacktestEngine(strat, 10000, 2.0, true);
       const res = engine.run(candles, symbol);
 
       resultsTable.push([
@@ -61,8 +63,8 @@ async function main() {
 
     console.log(resultsTable.toString());
 
-    // Print latest live signal
-    console.log(`\n📊 Current Real-Time Signal (Last Candle: $${candles[candles.length - 1].close.toLocaleString()}):`);
+    // Print latest real-time signal and market regime
+    console.log(`\n📊 Real-Time Market Analysis (Price: $${candles[candles.length - 1].close.toLocaleString()}):`);
     for (const strat of strategies) {
       const signal = strat.analyze(candles);
       console.log(`- [${strat.name}]: ${signal.type} | Reason: ${signal.reason}`);
