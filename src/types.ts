@@ -9,6 +9,48 @@ export interface Candle {
 
 export type SignalType = 'BUY' | 'SELL' | 'HOLD';
 
+export interface StrategySettings {
+  fastEmaPeriod: number;
+  slowEmaPeriod: number;
+  macroEmaPeriod: number;
+  liquidityLookback: number;
+  minWickRatio: number;
+  riskPerTradePercent: number;
+  riskRewardRatio: number;
+  useTrailingStop: boolean;
+  initialBalance: number;
+}
+
+export const DEFAULT_STRATEGY_SETTINGS: StrategySettings = {
+  fastEmaPeriod: 9,
+  slowEmaPeriod: 21,
+  macroEmaPeriod: 200,
+  liquidityLookback: 20,
+  minWickRatio: 0.35,
+  riskPerTradePercent: 2.0,
+  riskRewardRatio: 2.5,
+  useTrailingStop: true,
+  initialBalance: 10000
+};
+
+export interface SetupDiagnostics {
+  setupName: string;
+  score: number;
+  vwap: number;
+  vwapUpper: number;
+  vwapLower: number;
+  sellSideLiquidity: number;
+  buySideLiquidity: number;
+  sweepType: 'NONE' | 'BULLISH_SWEEP' | 'BEARISH_SWEEP';
+  emaAligned: boolean;
+  vwapReaction: boolean;
+  liquiditySwept: boolean;
+  wickConfirmed: boolean;
+  suggestedEntry: number;
+  suggestedStopLoss: number;
+  suggestedTakeProfit: number;
+}
+
 export interface TradeSignal {
   type: SignalType;
   price: number;
@@ -16,6 +58,7 @@ export interface TradeSignal {
   reason: string;
   stopLoss?: number;
   takeProfit?: number;
+  diagnostics?: SetupDiagnostics;
 }
 
 export interface Position {
@@ -43,6 +86,7 @@ export interface TradeRecord {
 export interface EquityPoint {
   timestamp: number;
   equity: number;
+  drawdownPercent?: number;
 }
 
 export interface BacktestResult {
@@ -67,4 +111,4 @@ export interface Strategy {
   analyze(candles: Candle[]): TradeSignal;
 }
 
-export type StrategyId = 'adaptive' | 'trend' | 'reversion';
+export type StrategyId = 'ema_vwap_liquidity' | 'adaptive' | 'trend' | 'reversion';

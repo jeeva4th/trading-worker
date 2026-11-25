@@ -1,7 +1,7 @@
 const state = {
-  symbol: 'BTC/USDT',
+  symbol: 'XAU/USD',
   timeframe: '1h',
-  strategy: 'adaptive',
+  strategy: 'ema_vwap_liquidity',
   activeTab: 'strategy',
   tvWidgetInitializedFor: null
 };
@@ -9,31 +9,62 @@ const state = {
 let mainChart = null;
 let candleSeries = null;
 let volumeSeries = null;
-let ema9Series = null;
-let ema21Series = null;
-let ema200Series = null;
+let emaFastSeries = null;
+let emaSlowSeries = null;
+let emaMacroSeries = null;
+let vwapSeries = null;
+let vwapUpperSeries = null;
+let vwapLowerSeries = null;
+
+let oscillatorChart = null;
+let rsiSeries = null;
+let adxSeries = null;
+
 let equityChart = null;
 let equitySeries = null;
-let lastPriceLines = [];
+let drawdownSeries = null;
+
+let dynamicPriceLines = [];
+
+function getSettingsFromUI() {
+  return {
+    fastEmaPeriod: Number(document.getElementById('set-fast-ema').value || 9),
+    slowEmaPeriod: Number(document.getElementById('set-slow-ema').value || 21),
+    macroEmaPeriod: Number(document.getElementById('set-macro-ema').value || 200),
+    liquidityLookback: Number(document.getElementById('set-lookback').value || 20),
+    minWickRatio: Number(document.getElementById('set-wick').value || 0.35),
+    riskPerTradePercent: Number(document.getElementById('set-risk').value || 2.0),
+    riskRewardRatio: Number(document.getElementById('set-rr').value || 2.5),
+    initialBalance: Number(document.getElementById('set-capital').value || 10000),
+    useTrailingStop: document.getElementById('set-trailing').checked
+  };
+}
+
+function resetSettingsUI() {
+  document.getElementById('set-fast-ema').value = 9;
+  document.getElementById('set-slow-ema').value = 21;
+  document.getElementById('set-macro-ema').value = 200;
+  document.getElementById('set-lookback').value = 20;
+  document.getElementById('set-wick').value = 0.35;
+  document.getElementById('set-risk').value = 2.0;
+  document.getElementById('set-rr').value = 2.5;
+  document.getElementById('set-capital').value = 10000;
+  document.getElementById('set-trailing').checked = true;
+}
 
 function initCharts() {
+  const chartOpts = {
+    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
+    grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+    rightPriceScale: { borderColor: '#262c3d' },
+    timeScale: { borderColor: '#262c3d', timeVisible: true, secondsVisible: false }
+  };
+
+  // 1. Main Price + EMA + VWAP + Liquidity Chart
   const chartEl = document.getElementById('tv-lightweight-chart');
   mainChart = LightweightCharts.createChart(chartEl, {
-    layout: {
-      background: { type: 'solid', color: '#131722' },
-      textColor: '#d1d4dc'
-    },
-    grid: {
-      vertLines: { color: '#1e222d' },
-      horzLines: { color: '#1e222d' }
-    },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#262c3d' },
-    timeScale: {
-      borderColor: '#262c3d',
-      timeVisible: true,
-      secondsVisible: false
-    }
+    ...chartOpts,
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
   });
 
   candleSeries = mainChart.addCandlestickSeries({
@@ -45,54 +76,86 @@ function initCharts() {
   });
 
   volumeSeries = mainChart.addHistogramSeries({
-    color: '#26a69a',
     priceFormat: { type: 'volume' },
     priceScaleId: '',
-    scaleMargins: { top: 0.82, bottom: 0 }
+    scaleMargins: { top: 0.84, bottom: 0 }
   });
 
-  ema9Series = mainChart.addLineSeries({ color: '#22d3ee', lineWidth: 1.5, priceLineVisible: false });
-  ema21Series = mainChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false });
-  ema200Series = mainChart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
+  emaFastSeries = mainChart.addLineSeries({ color: '#22d3ee', lineWidth: 1.5, priceLineVisible: false });
+  emaSlowSeries = mainChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false });
+  emaMacroSeries = mainChart.addLineSeries({ color: '#a855f7', lineWidth: 2, priceLineVisible: false });
 
+  vwapSeries = mainChart.addLineSeries({ color: '#fbbf24', lineWidth: 2, priceLineVisible: false });
+  vwapUpperSeries = mainChart.addLineSeries({
+    color: 'rgba(251, 191, 36, 0.4)',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted,
+    priceLineVisible: false
+  });
+  vwapLowerSeries = mainChart.addLineSeries({
+    color: 'rgba(251, 191, 36, 0.4)',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted,
+    priceLineVisible: false
+  });
+
+  // 2. Oscillator Graph (RSI + ADX)
+  const oscEl = document.getElementById('oscillator-chart');
+  oscillatorChart = LightweightCharts.createChart(oscEl, chartOpts);
+  rsiSeries = oscillatorChart.addLineSeries({ color: '#22d3ee', lineWidth: 1.8, title: 'RSI' });
+  adxSeries = oscillatorChart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, title: 'ADX' });
+  rsiSeries.createPriceLine({ price: 70, color: 'rgba(239, 83, 80, 0.4)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+  rsiSeries.createPriceLine({ price: 30, color: 'rgba(38, 166, 154, 0.4)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed });
+  adxSeries.createPriceLine({ price: 22, color: 'rgba(245, 158, 11, 0.35)', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted });
+
+  // 3. Equity Curve & Drawdown Graph
   const eqEl = document.getElementById('equity-chart');
-  equityChart = LightweightCharts.createChart(eqEl, {
-    layout: {
-      background: { type: 'solid', color: '#131722' },
-      textColor: '#d1d4dc'
-    },
-    grid: {
-      vertLines: { color: '#1e222d' },
-      horzLines: { color: '#1e222d' }
-    },
-    rightPriceScale: { borderColor: '#262c3d' },
-    timeScale: { borderColor: '#262c3d', timeVisible: true }
-  });
-
+  equityChart = LightweightCharts.createChart(eqEl, chartOpts);
   equitySeries = equityChart.addAreaSeries({
     topColor: 'rgba(41, 98, 255, 0.35)',
     bottomColor: 'rgba(41, 98, 255, 0.02)',
     lineColor: '#2962ff',
     lineWidth: 2
   });
+  drawdownSeries = equityChart.addHistogramSeries({
+    color: 'rgba(239, 83, 80, 0.45)',
+    priceScaleId: 'left',
+    priceFormat: { type: 'percent' }
+  });
+  equityChart.priceScale('left').applyOptions({
+    visible: true,
+    borderColor: '#262c3d',
+    scaleMargins: { top: 0.7, bottom: 0 }
+  });
 
   window.addEventListener('resize', () => {
     if (mainChart) mainChart.applyOptions({ width: chartEl.clientWidth });
+    if (oscillatorChart) oscillatorChart.applyOptions({ width: oscEl.clientWidth });
     if (equityChart) equityChart.applyOptions({ width: eqEl.clientWidth });
   });
 }
 
-function clearPriceLines() {
-  for (const line of lastPriceLines) {
+function clearDynamicPriceLines() {
+  for (const line of dynamicPriceLines) {
     candleSeries.removePriceLine(line);
   }
-  lastPriceLines = [];
+  dynamicPriceLines = [];
+}
+
+function applyLayerVisibility() {
+  const showEmas = document.getElementById('toggle-emas').checked;
+  const showVwap = document.getElementById('toggle-vwap').checked;
+
+  emaFastSeries.applyOptions({ visible: showEmas });
+  emaSlowSeries.applyOptions({ visible: showEmas });
+  emaMacroSeries.applyOptions({ visible: showEmas });
+  vwapSeries.applyOptions({ visible: showVwap });
+  vwapUpperSeries.applyOptions({ visible: showVwap });
+  vwapLowerSeries.applyOptions({ visible: showVwap });
 }
 
 function toTvSymbol(pair) {
-  if (pair === 'XAU/USD' || pair === 'XAUUSD') {
-    return 'OANDA:XAUUSD';
-  }
+  if (pair === 'XAU/USD' || pair === 'XAUUSD') return 'OANDA:XAUUSD';
   return 'BINANCE:' + pair.replace('/', '');
 }
 
@@ -108,7 +171,7 @@ function renderTradingViewProWidget() {
   container.innerHTML = '';
 
   if (typeof TradingView === 'undefined') {
-    container.innerHTML = '<div style="padding:20px;color:#787b86;">TradingView widget script blocked or offline. Use Strategy Overlay tab.</div>';
+    container.innerHTML = '<div style="padding:20px;color:#787b86;">TradingView widget offline. Use All Graphs view.</div>';
     return;
   }
 
@@ -122,7 +185,7 @@ function renderTradingViewProWidget() {
     locale: 'en',
     enable_publishing: false,
     allow_symbol_change: true,
-    studies: ['STD;EMA', 'STD;RSI'],
+    studies: ['STD;EMA', 'STD;VWAP', 'STD;RSI'],
     container_id: 'tradingview_pro_widget'
   });
 
@@ -136,14 +199,50 @@ async function fetchJson(url, options) {
   return data;
 }
 
+function renderChecklist(id, pass) {
+  const el = document.getElementById(id);
+  el.className = `check-item ${pass ? 'pass' : 'fail'}`;
+  el.querySelector('strong').textContent = pass ? '✓ PASS' : 'WAIT';
+}
+
+function renderSetupDiagnostics(diag) {
+  if (!diag) return;
+  document.getElementById('metric-score').textContent = `${diag.score}%`;
+  document.getElementById('setup-score-badge').textContent = `${diag.score}%`;
+
+  renderChecklist('chk-ema', diag.emaAligned);
+  renderChecklist('chk-vwap', diag.vwapReaction);
+  renderChecklist('chk-sweep', diag.liquiditySwept);
+  renderChecklist('chk-wick', diag.wickConfirmed);
+
+  document.getElementById('setup-ssl').textContent = `$${diag.sellSideLiquidity.toLocaleString()}`;
+  document.getElementById('setup-vwap').textContent = `$${diag.vwap.toLocaleString()}`;
+  document.getElementById('setup-bsl').textContent = `$${diag.buySideLiquidity.toLocaleString()}`;
+  document.getElementById('setup-sl').textContent = `$${diag.suggestedStopLoss.toLocaleString()}`;
+  document.getElementById('setup-tp').textContent = `$${diag.suggestedTakeProfit.toLocaleString()}`;
+  document.getElementById('setup-sweep-type').textContent = diag.sweepType;
+}
+
 async function loadMarket() {
   const statusEl = document.getElementById('chart-status');
-  statusEl.textContent = `Fetching ${state.symbol} (${state.timeframe})...`;
+  statusEl.textContent = `Loading ${state.symbol} (${state.timeframe})...`;
+  const s = getSettingsFromUI();
 
   try {
-    const data = await fetchJson(
-      `/api/market?symbol=${encodeURIComponent(state.symbol)}&timeframe=${encodeURIComponent(state.timeframe)}&strategy=${encodeURIComponent(state.strategy)}&limit=350`
-    );
+    const qs = new URLSearchParams({
+      symbol: state.symbol,
+      timeframe: state.timeframe,
+      strategy: state.strategy,
+      limit: '350',
+      fastEma: String(s.fastEmaPeriod),
+      slowEma: String(s.slowEmaPeriod),
+      macroEma: String(s.macroEmaPeriod),
+      lookback: String(s.liquidityLookback),
+      minWick: String(s.minWickRatio),
+      rr: String(s.riskRewardRatio)
+    });
+
+    const data = await fetchJson(`/api/market?${qs.toString()}`);
 
     candleSeries.setData(data.candles);
     volumeSeries.setData(
@@ -154,14 +253,21 @@ async function loadMarket() {
       }))
     );
 
-    ema9Series.setData(data.indicators.ema9);
-    ema21Series.setData(data.indicators.ema21);
-    ema200Series.setData(data.indicators.ema200);
+    emaFastSeries.setData(data.indicators.emaFast);
+    emaSlowSeries.setData(data.indicators.emaSlow);
+    emaMacroSeries.setData(data.indicators.emaMacro);
+    vwapSeries.setData(data.indicators.vwap);
+    vwapUpperSeries.setData(data.indicators.vwapUpper);
+    vwapLowerSeries.setData(data.indicators.vwapLower);
 
-    // Update telemetry strip
+    rsiSeries.setData(data.indicators.rsiSeries);
+    adxSeries.setData(data.indicators.adxSeries);
+
+    applyLayerVisibility();
+
+    // Update Telemetry Strip
     document.getElementById('metric-symbol').textContent = data.symbol;
-    const priceEl = document.getElementById('metric-price');
-    priceEl.textContent = `$${Number(data.ticker.last).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+    document.getElementById('metric-price').textContent = `$${Number(data.ticker.last).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 
     const change = Number(data.ticker.changePercent || 0);
     const changeEl = document.getElementById('metric-change');
@@ -171,42 +277,68 @@ async function loadMarket() {
     const regimeEl = document.getElementById('metric-regime');
     regimeEl.textContent = data.metrics.regime;
     regimeEl.className = `regime-badge ${data.metrics.regimeBadge}`;
-    document.getElementById('metric-adx').textContent = `ADX: ${data.metrics.adx} | 200 EMA: ${data.metrics.ema200 ?? '—'}`;
+    document.getElementById('metric-adx').textContent = `ADX: ${data.metrics.adx} | RSI: ${data.metrics.rsi}`;
 
-    document.getElementById('metric-rsi').textContent = `RSI ${data.metrics.rsi}`;
-    document.getElementById('metric-atr').textContent = `ATR: $${data.metrics.atr}`;
+    document.getElementById('metric-vwap').textContent = `VWAP $${data.metrics.vwap.toLocaleString()}`;
+    document.getElementById('metric-ema200').textContent = `200 EMA: $${data.metrics.ema200 ?? '—'} | ATR: $${data.metrics.atr}`;
 
     const sigEl = document.getElementById('metric-signal');
     sigEl.textContent = data.signal.type;
     sigEl.className = `signal-pill ${data.signal.type.toLowerCase()}`;
     document.getElementById('metric-signal-reason').textContent = data.signal.reason;
 
-    clearPriceLines();
-    if (data.signal.stopLoss) {
-      lastPriceLines.push(
+    if (data.diagnostics) {
+      renderSetupDiagnostics(data.diagnostics);
+    }
+
+    // Draw Liquidity Pools & Setup SL/TP Price Lines
+    clearDynamicPriceLines();
+    const showLiquidity = document.getElementById('toggle-liquidity').checked;
+    if (showLiquidity && data.diagnostics) {
+      dynamicPriceLines.push(
         candleSeries.createPriceLine({
-          price: data.signal.stopLoss,
-          color: '#ef5350',
+          price: data.diagnostics.buySideLiquidity,
+          color: '#ec4899',
           lineWidth: 1,
           lineStyle: LightweightCharts.LineStyle.Dashed,
-          title: 'SL'
+          title: 'BSL (High)'
+        }),
+        candleSeries.createPriceLine({
+          price: data.diagnostics.sellSideLiquidity,
+          color: '#22d3ee',
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          title: 'SSL (Low)'
         })
       );
     }
-    if (data.signal.takeProfit) {
-      lastPriceLines.push(
+
+    if (data.signal.stopLoss || data.diagnostics?.suggestedStopLoss) {
+      dynamicPriceLines.push(
         candleSeries.createPriceLine({
-          price: data.signal.takeProfit,
+          price: data.signal.stopLoss || data.diagnostics.suggestedStopLoss,
+          color: '#ef5350',
+          lineWidth: 1,
+          lineStyle: LightweightCharts.LineStyle.Dotted,
+          title: 'Setup SL'
+        })
+      );
+    }
+    if (data.signal.takeProfit || data.diagnostics?.suggestedTakeProfit) {
+      dynamicPriceLines.push(
+        candleSeries.createPriceLine({
+          price: data.signal.takeProfit || data.diagnostics.suggestedTakeProfit,
           color: '#26a69a',
           lineWidth: 1,
-          lineStyle: LightweightCharts.LineStyle.Dashed,
-          title: 'TP'
+          lineStyle: LightweightCharts.LineStyle.Dotted,
+          title: 'Setup TP'
         })
       );
     }
 
     mainChart.timeScale().fitContent();
-    statusEl.textContent = `Live synced (${data.candles.length} candles)`;
+    oscillatorChart.timeScale().fitContent();
+    statusEl.textContent = `Synced ${data.candles.length} candles`;
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
   }
@@ -216,6 +348,7 @@ async function runBacktest() {
   const btn = document.getElementById('btn-run-backtest');
   btn.disabled = true;
   btn.textContent = 'Running...';
+  const settings = getSettingsFromUI();
 
   try {
     const res = await fetchJson('/api/backtest', {
@@ -225,12 +358,11 @@ async function runBacktest() {
         symbol: state.symbol,
         timeframe: state.timeframe,
         strategy: state.strategy,
-        initialBalance: 10000,
-        limit: 500
+        limit: 500,
+        settings
       })
     });
 
-    // Plot Buy / Sell markers on TradingView candles
     const markers = [];
     for (const t of res.trades) {
       markers.push({
@@ -238,12 +370,12 @@ async function runBacktest() {
         position: 'belowBar',
         color: '#26a69a',
         shape: 'arrowUp',
-        text: `BUY @${t.entryPrice.toFixed(0)}`
+        text: `BUY @${t.entryPrice.toFixed(1)}`
       });
       markers.push({
         time: t.exitTimeSec,
         position: 'aboveBar',
-        color: t.pnl >= 0 ? '#22d3ee' : '#ef5350',
+        color: t.pnl >= 0 ? '#fbbf24' : '#ef5350',
         shape: 'arrowDown',
         text: `${t.pnl >= 0 ? '+' : ''}${t.pnlPercent.toFixed(1)}%`
       });
@@ -251,13 +383,13 @@ async function runBacktest() {
     markers.sort((a, b) => a.time - b.time);
     candleSeries.setMarkers(markers);
 
-    // Plot Equity Curve
-    equitySeries.setData(res.equityCurve);
+    equitySeries.setData(res.equityCurve.map(p => ({ time: p.time, value: p.value })));
+    drawdownSeries.setData(res.equityCurve.map(p => ({ time: p.time, value: p.drawdown })));
     equityChart.timeScale().fitContent();
+
     document.getElementById('equity-summary').textContent =
       `Final: $${res.finalBalance.toFixed(2)} (${res.totalPnlPercent >= 0 ? '+' : ''}${res.totalPnlPercent.toFixed(2)}%)`;
 
-    // Update Sidebar Backtest Metrics
     const retEl = document.getElementById('bt-return');
     retEl.textContent = `${res.totalPnlPercent >= 0 ? '+' : ''}${res.totalPnlPercent.toFixed(2)}%`;
     retEl.className = res.totalPnlPercent >= 0 ? 'pos-text-green' : 'pos-text-red';
@@ -266,6 +398,7 @@ async function runBacktest() {
     document.getElementById('bt-pf').textContent = `${res.profitFactor}`;
     document.getElementById('bt-dd').textContent = `${res.maxDrawdownPercent.toFixed(2)}%`;
     document.getElementById('bt-trade-count').textContent = res.totalTrades;
+    document.getElementById('bt-trade-count-label').textContent = `${res.totalTrades} trades`;
 
     const tradesList = document.getElementById('bt-trades');
     if (res.trades.length === 0) {
@@ -295,6 +428,52 @@ async function runBacktest() {
   }
 }
 
+async function scanSetups() {
+  const tbody = document.getElementById('scanner-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" class="pos-empty">Scanning XAU/USD, BTC, ETH, SOL, BNB...</td></tr>';
+  const s = getSettingsFromUI();
+
+  try {
+    const qs = new URLSearchParams({
+      timeframe: state.timeframe,
+      fastEma: String(s.fastEmaPeriod),
+      slowEma: String(s.slowEmaPeriod),
+      macroEma: String(s.macroEmaPeriod),
+      lookback: String(s.liquidityLookback),
+      minWick: String(s.minWickRatio)
+    });
+
+    const res = await fetchJson(`/api/setups/scan?${qs.toString()}`);
+    tbody.innerHTML = res.setups
+      .map(item => {
+        const d = item.diagnostics;
+        return `
+          <tr>
+            <td><strong>${item.symbol}</strong></td>
+            <td>$${Number(item.price).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+            <td><span class="score-pill">${d ? d.score : 0}%</span></td>
+            <td>${d ? d.sweepType : 'NONE'}</td>
+            <td>${d ? `$${d.sellSideLiquidity.toFixed(1)} / $${d.buySideLiquidity.toFixed(1)}` : '—'}</td>
+            <td>${d ? `$${d.vwap.toFixed(1)}` : '—'}</td>
+            <td><span class="signal-pill ${item.signal.toLowerCase()}">${item.signal}</span></td>
+            <td><button class="btn btn-ghost btn-sm" onclick="selectScannedAsset('${item.symbol}')">Load</button></td>
+          </tr>
+        `;
+      })
+      .join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="8" class="pos-empty">Scanner error: ${err.message}</td></tr>`;
+  }
+}
+
+window.selectScannedAsset = async function selectScannedAsset(symbol) {
+  state.symbol = symbol;
+  document.getElementById('symbol-select').value = symbol;
+  await loadMarket();
+  await runBacktest();
+  if (state.activeTab === 'tv') renderTradingViewProWidget();
+};
+
 function renderWorkerState(w) {
   const badge = document.getElementById('worker-badge');
   badge.textContent = w.running ? 'RUNNING' : 'STOPPED';
@@ -320,15 +499,11 @@ function renderWorkerState(w) {
           ${w.unrealizedPnlPercent >= 0 ? '+' : ''}${w.unrealizedPnlPercent.toFixed(2)}%
         </strong>
       </div>
-      <div class="metric-sub">
-        Entry: $${w.position.entryPrice.toFixed(2)} | Size: ${w.position.amount.toFixed(4)}
-      </div>
-      <div class="metric-sub">
-        Trailing SL: $${(w.position.stopLoss || 0).toFixed(2)} | TP: $${(w.position.takeProfit || 0).toFixed(2)}
-      </div>
+      <div class="metric-sub">Entry: $${w.position.entryPrice.toFixed(2)} | Size: ${w.position.amount.toFixed(4)}</div>
+      <div class="metric-sub">SL: $${(w.position.stopLoss || 0).toFixed(2)} | TP: $${(w.position.takeProfit || 0).toFixed(2)}</div>
     `;
   } else {
-    posBox.innerHTML = `<div class="pos-empty">No open position (${w.symbol} Flat / Cash Protected)</div>`;
+    posBox.innerHTML = `<div class="pos-empty">No open position (${w.symbol} Flat)</div>`;
   }
 
   const logsEl = document.getElementById('worker-logs');
@@ -346,14 +521,60 @@ async function refreshWorkerStatus() {
     const w = await fetchJson('/api/worker/status');
     renderWorkerState(w);
   } catch {
-    // Ignore polling hiccup
+    // Ignore transient polling issue
   }
 }
 
 function bindEvents() {
+  document.getElementById('toggle-emas').addEventListener('change', applyLayerVisibility);
+  document.getElementById('toggle-vwap').addEventListener('change', applyLayerVisibility);
+  document.getElementById('toggle-liquidity').addEventListener('change', loadMarket);
+
+  document.getElementById('btn-apply-settings').addEventListener('click', async () => {
+    const settings = getSettingsFromUI();
+    await fetchJson('/api/worker/configure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: state.symbol,
+        timeframe: state.timeframe,
+        strategyId: state.strategy,
+        settings
+      })
+    });
+    await loadMarket();
+    await runBacktest();
+    await scanSetups();
+  });
+
+  document.getElementById('btn-reset-settings').addEventListener('click', async () => {
+    resetSettingsUI();
+    await loadMarket();
+    await runBacktest();
+  });
+
+  document.getElementById('btn-scan-setups').addEventListener('click', scanSetups);
+
+  document.getElementById('btn-take-setup').addEventListener('click', async () => {
+    const res = await fetchJson('/api/webhook/tradingview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, action: 'BUY', timeframe: state.timeframe })
+    });
+    renderWorkerState(res.workerState);
+  });
+
+  document.getElementById('btn-close-setup').addEventListener('click', async () => {
+    const res = await fetchJson('/api/webhook/tradingview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: state.symbol, action: 'SELL', timeframe: state.timeframe })
+    });
+    renderWorkerState(res.workerState);
+  });
+
   document.getElementById('btn-tv-analyze').addEventListener('click', async () => {
-    const inputEl = document.getElementById('tv-url-input');
-    const urlOrSymbol = inputEl.value.trim();
+    const urlOrSymbol = document.getElementById('tv-url-input').value.trim();
     if (!urlOrSymbol) return;
     const btn = document.getElementById('btn-tv-analyze');
     btn.disabled = true;
@@ -388,24 +609,6 @@ function bindEvents() {
     }
   });
 
-  document.getElementById('btn-sim-tv-buy').addEventListener('click', async () => {
-    const res = await fetchJson('/api/webhook/tradingview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: state.symbol, action: 'BUY', timeframe: state.timeframe })
-    });
-    renderWorkerState(res.workerState);
-  });
-
-  document.getElementById('btn-sim-tv-sell').addEventListener('click', async () => {
-    const res = await fetchJson('/api/webhook/tradingview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: state.symbol, action: 'SELL', timeframe: state.timeframe })
-    });
-    renderWorkerState(res.workerState);
-  });
-
   document.getElementById('symbol-select').addEventListener('change', async e => {
     state.symbol = e.target.value;
     await loadMarket();
@@ -426,6 +629,7 @@ function bindEvents() {
       state.timeframe = btn.dataset.tf;
       await loadMarket();
       await runBacktest();
+      await scanSetups();
       if (state.activeTab === 'tv') renderTradingViewProWidget();
     });
   });
@@ -451,6 +655,7 @@ function bindEvents() {
   document.getElementById('btn-refresh').addEventListener('click', async () => {
     await loadMarket();
     await refreshWorkerStatus();
+    await scanSetups();
   });
 
   document.getElementById('btn-worker-start').addEventListener('click', async () => {
@@ -461,7 +666,8 @@ function bindEvents() {
         symbol: state.symbol,
         timeframe: state.timeframe,
         strategyId: state.strategy,
-        pollIntervalMs: 15000
+        pollIntervalMs: 15000,
+        settings: getSettingsFromUI()
       })
     });
     renderWorkerState(w);
@@ -478,10 +684,11 @@ function bindEvents() {
   });
 
   document.getElementById('btn-worker-reset').addEventListener('click', async () => {
+    const settings = getSettingsFromUI();
     const w = await fetchJson('/api/worker/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ initialBalance: 10000 })
+      body: JSON.stringify({ initialBalance: settings.initialBalance })
     });
     renderWorkerState(w);
   });
@@ -505,9 +712,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   initCharts();
   bindEvents();
-  await loadMarket();
-  await runBacktest();
-  await refreshWorkerStatus();
+  await Promise.all([loadMarket(), runBacktest(), refreshWorkerStatus(), scanSetups()]);
 
   if (urlTab === 'tv') {
     document.getElementById('tab-tv-widget').click();

@@ -3,7 +3,7 @@ import path from 'path';
 import { ExchangeConnector } from '../connectors/exchange';
 import { TechnicalIndicators } from '../indicators';
 import { createStrategy } from '../strategies';
-import { Position, StrategyId, TradeRecord, TradeSignal } from '../types';
+import { DEFAULT_STRATEGY_SETTINGS, Position, StrategyId, StrategySettings, TradeRecord, TradeSignal } from '../types';
 import { normalizeSymbolPair } from '../utils/tradingviewParser';
 
 export interface WorkerLog {
@@ -18,6 +18,7 @@ export interface PaperWorkerState {
   timeframe: string;
   strategyId: StrategyId;
   strategyName: string;
+  settings: StrategySettings;
   initialBalance: number;
   cashBalance: number;
   lastPrice: number;
@@ -46,8 +47,11 @@ export class PaperTrader {
     this.exchange = new ExchangeConnector(exchangeId);
     this.stateFilePath = path.join(stateDir, 'paper_state.json');
 
-    const defaultState = this.createDefaultState('BTC/USDT', '1h', 'adaptive', 10000, 15000);
+    const defaultState = this.createDefaultState('XAU/USD', '1h', 'ema_vwap_liquidity', 10000, 15000);
     this.state = this.loadState() || defaultState;
+    if (!this.state.settings) {
+      this.state.settings = { ...DEFAULT_STRATEGY_SETTINGS };
+    }
     // Always start paused on fresh boot unless explicitly started
     this.state.running = false;
   }
@@ -66,6 +70,7 @@ export class PaperTrader {
       timeframe,
       strategyId,
       strategyName: strategy.name,
+      settings: { ...DEFAULT_STRATEGY_SETTINGS },
       initialBalance,
       cashBalance: initialBalance,
       lastPrice: 0,
@@ -131,12 +136,16 @@ export class PaperTrader {
     timeframe?: string;
     strategyId?: StrategyId;
     pollIntervalMs?: number;
+    settings?: Partial<StrategySettings>;
   }): PaperWorkerState {
     if (options.symbol) this.state.symbol = options.symbol;
     if (options.timeframe) this.state.timeframe = options.timeframe;
+    if (options.settings) {
+      this.state.settings = { ...this.state.settings, ...options.settings };
+    }
     if (options.strategyId) {
       this.state.strategyId = options.strategyId;
-      this.state.strategyName = createStrategy(options.strategyId).name;
+      this.state.strategyName = createStrategy(options.strategyId, this.state.settings).name;
     }
     if (options.pollIntervalMs && options.pollIntervalMs >= 3000) {
       this.state.pollIntervalMs = options.pollIntervalMs;
@@ -168,6 +177,7 @@ export class PaperTrader {
     timeframe?: string;
     strategyId?: StrategyId;
     pollIntervalMs?: number;
+    settings?: Partial<StrategySettings>;
   }): Promise<PaperWorkerState> {
     if (options) {
       this.configure(options);
@@ -355,7 +365,7 @@ export class PaperTrader {
       const atrValues = TechnicalIndicators.getATR(candles, 14);
       const currentAtr = atrValues.length > 0 ? atrValues[atrValues.length - 1] : latest.close * 0.02;
 
-      const strategy = createStrategy(this.state.strategyId);
+      const strategy = createStrategy(this.state.strategyId, this.state.settings);
       const signal = strategy.analyze(candles);
 
       this.state.lastPrice = latest.close;

@@ -1,4 +1,5 @@
-import { Strategy, StrategyId } from '../types';
+import { DEFAULT_STRATEGY_SETTINGS, Strategy, StrategyId, StrategySettings } from '../types';
+import { EmaVwapLiquidityStrategy } from './emaVwapLiquidityStrategy';
 import { AdaptiveRegimeStrategy } from './adaptiveRegimeStrategy';
 import { TrendFollowingStrategy } from './trendFollowing';
 import { MeanReversionStrategy } from './meanReversion';
@@ -10,6 +11,11 @@ export interface StrategyMeta {
 }
 
 export const STRATEGY_CATALOG: StrategyMeta[] = [
+  {
+    id: 'ema_vwap_liquidity',
+    name: 'EMA VWAP Liquidity Reaction Model',
+    description: 'Sweeps Sell-Side/Buy-Side liquidity, confirms VWAP institutional reaction, and aligns with EMA bias.'
+  },
   {
     id: 'adaptive',
     name: 'Adaptive Regime (ADX + 200 EMA + ATR)',
@@ -27,16 +33,22 @@ export const STRATEGY_CATALOG: StrategyMeta[] = [
   }
 ];
 
-export function createStrategy(id: StrategyId = 'adaptive'): Strategy {
+export function createStrategy(
+  id: StrategyId = 'ema_vwap_liquidity',
+  settings: Partial<StrategySettings> = {}
+): Strategy {
+  const merged = { ...DEFAULT_STRATEGY_SETTINGS, ...settings };
   switch (id) {
+    case 'adaptive':
+      return new AdaptiveRegimeStrategy(14, merged.macroEmaPeriod, merged.fastEmaPeriod, merged.slowEmaPeriod);
     case 'trend':
-      return new TrendFollowingStrategy(9, 21, 14);
+      return new TrendFollowingStrategy(merged.fastEmaPeriod, merged.slowEmaPeriod, 14);
     case 'reversion':
       return new MeanReversionStrategy(20, 2, 14);
-    case 'adaptive':
+    case 'ema_vwap_liquidity':
     default:
-      return new AdaptiveRegimeStrategy(14, 200, 9, 21);
+      return new EmaVwapLiquidityStrategy(merged);
   }
 }
 
-export { AdaptiveRegimeStrategy, TrendFollowingStrategy, MeanReversionStrategy };
+export { EmaVwapLiquidityStrategy, AdaptiveRegimeStrategy, TrendFollowingStrategy, MeanReversionStrategy };

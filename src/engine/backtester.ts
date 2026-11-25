@@ -114,11 +114,15 @@ export class BacktestEngine {
 
       // 3. Track Equity Curve & Drawdown
       const currentEquity = balance + (position ? position.amount * currentCandle.close : 0);
-      equityCurve.push({ timestamp: currentCandle.timestamp, equity: Number(currentEquity.toFixed(2)) });
-
       if (currentEquity > peakBalance) peakBalance = currentEquity;
       const drawdown = ((peakBalance - currentEquity) / peakBalance) * 100;
       if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+      equityCurve.push({
+        timestamp: currentCandle.timestamp,
+        equity: Number(currentEquity.toFixed(2)),
+        drawdownPercent: Number((-drawdown).toFixed(2))
+      });
     }
 
     // Close remaining open position at backtest end

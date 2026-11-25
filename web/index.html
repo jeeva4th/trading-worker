@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Trading Worker — TradingView Quant Terminal</title>
+  <title>Trading Worker — EMA VWAP Liquidity Dashboard</title>
   <link rel="stylesheet" href="/styles.css" />
   <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
   <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
@@ -13,25 +13,24 @@
     <div class="brand">
       <span class="brand-dot"></span>
       <span class="brand-title">TRADING WORKER</span>
-      <span class="brand-sub">Quant + TradingView</span>
+      <span class="brand-sub">EMA VWAP Liquidity Dashboard</span>
     </div>
 
     <div class="controls">
       <div class="tv-url-bar">
-        <input id="tv-url-input" type="text" placeholder="Paste TradingView URL or Symbol (e.g. BINANCE:SOLUSDT)" />
+        <input id="tv-url-input" type="text" placeholder="Paste TradingView URL or Symbol (e.g. OANDA:XAUUSD)" />
         <button id="btn-tv-analyze" class="btn btn-primary">Analyze URL</button>
       </div>
 
       <div class="control-group">
-        <label for="symbol-select">Pair</label>
+        <label for="symbol-select">Asset</label>
         <select id="symbol-select">
-          <option value="XAU/USD">XAU/USD (Gold)</option>
-          <option value="BTC/USDT" selected>BTC/USDT</option>
+          <option value="XAU/USD" selected>XAU/USD (Gold)</option>
+          <option value="BTC/USDT">BTC/USDT</option>
           <option value="ETH/USDT">ETH/USDT</option>
           <option value="SOL/USDT">SOL/USDT</option>
           <option value="BNB/USDT">BNB/USDT</option>
           <option value="XRP/USDT">XRP/USDT</option>
-          <option value="DOGE/USDT">DOGE/USDT</option>
         </select>
       </div>
 
@@ -44,47 +43,51 @@
       </div>
 
       <div class="control-group">
-        <label for="strategy-select">Strategy</label>
+        <label for="strategy-select">Model</label>
         <select id="strategy-select">
-          <option value="adaptive" selected>Adaptive Regime (ADX + 200 EMA)</option>
+          <option value="ema_vwap_liquidity" selected>EMA VWAP Liquidity Reaction</option>
+          <option value="adaptive">Adaptive Regime (ADX + 200 EMA)</option>
           <option value="trend">EMA Trend Following + RSI</option>
           <option value="reversion">Bollinger Bands + RSI Reversion</option>
         </select>
       </div>
 
       <div class="view-tabs">
-        <button id="tab-strategy-chart" class="tab-btn active">Strategy Overlay</button>
+        <button id="tab-strategy-chart" class="tab-btn active">All Graphs</button>
         <button id="tab-tv-widget" class="tab-btn">TradingView Pro</button>
       </div>
 
       <button id="btn-run-backtest" class="btn btn-primary">Run Backtest</button>
-      <button id="btn-refresh" class="btn btn-ghost" title="Refresh market data">↻</button>
+      <button id="btn-refresh" class="btn btn-ghost" title="Refresh all graphs">↻</button>
     </div>
   </header>
 
   <section class="telemetry-strip">
     <div class="metric-box">
-      <span class="metric-label" id="metric-symbol">BTC/USDT</span>
+      <span class="metric-label" id="metric-symbol">XAU/USD</span>
       <span class="metric-value price" id="metric-price">—</span>
       <span class="metric-sub" id="metric-change">—</span>
     </div>
     <div class="metric-box">
-      <span class="metric-label">Market Regime</span>
+      <span class="metric-label">Market Regime (ADX)</span>
       <span class="regime-badge" id="metric-regime">LOADING...</span>
-      <span class="metric-sub" id="metric-adx">ADX: —</span>
+      <span class="metric-sub" id="metric-adx">ADX: — | RSI: —</span>
     </div>
     <div class="metric-box">
-      <span class="metric-label">RSI (14) / ATR (14)</span>
-      <span class="metric-value" id="metric-rsi">—</span>
-      <span class="metric-sub" id="metric-atr">ATR: —</span>
-    </div>
-    <div class="metric-box wide">
-      <span class="metric-label">Live Strategy Signal</span>
-      <span class="signal-pill hold" id="metric-signal">HOLD</span>
-      <span class="metric-sub truncate" id="metric-signal-reason">Analyzing candles...</span>
+      <span class="metric-label">VWAP & Macro Anchor</span>
+      <span class="metric-value" id="metric-vwap">—</span>
+      <span class="metric-sub" id="metric-ema200">200 EMA: — | ATR: —</span>
     </div>
     <div class="metric-box">
-      <span class="metric-label">Worker Equity</span>
+      <span class="metric-label">Setup Signal & Score</span>
+      <div class="signal-row">
+        <span class="signal-pill hold" id="metric-signal">HOLD</span>
+        <span class="score-pill" id="metric-score">0%</span>
+      </div>
+      <span class="metric-sub truncate" id="metric-signal-reason">Evaluating liquidity pools...</span>
+    </div>
+    <div class="metric-box">
+      <span class="metric-label">Paper Worker Equity</span>
       <span class="metric-value" id="metric-equity">$10,000.00</span>
       <span class="metric-sub" id="metric-unrealized">Unrealized: $0.00</span>
     </div>
@@ -92,31 +95,159 @@
 
   <main class="workspace">
     <section class="charts-column">
-      <div class="chart-card" id="strategy-chart-panel">
-        <div class="chart-header">
-          <div class="legend">
-            <span class="leg-item"><i class="dot ema9"></i>EMA 9</span>
-            <span class="leg-item"><i class="dot ema21"></i>EMA 21</span>
-            <span class="leg-item"><i class="dot ema200"></i>EMA 200</span>
-            <span class="leg-item"><i class="dot buy"></i>BUY Marker</span>
-            <span class="leg-item"><i class="dot sell"></i>SELL Marker</span>
+      <!-- All Graphs View -->
+      <div class="graphs-stack" id="strategy-chart-panel">
+        <!-- Graph 1: Price + EMAs + VWAP + Liquidity Pools -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <div class="legend">
+              <label class="leg-toggle"><input type="checkbox" id="toggle-emas" checked /><i class="dot ema9"></i>EMA 9/21/200</label>
+              <label class="leg-toggle"><input type="checkbox" id="toggle-vwap" checked /><i class="dot vwap"></i>Session VWAP + Bands</label>
+              <label class="leg-toggle"><input type="checkbox" id="toggle-liquidity" checked /><i class="dot bsl"></i>BSL / SSL Liquidity</label>
+              <span class="leg-item"><i class="dot buy"></i>Entry</span>
+              <span class="leg-item"><i class="dot sell"></i>Exit</span>
+            </div>
+            <span class="chart-status" id="chart-status">Ready</span>
           </div>
-          <span class="chart-status" id="chart-status">Ready</span>
+          <div id="tv-lightweight-chart" class="chart-container"></div>
         </div>
-        <div id="tv-lightweight-chart" class="chart-container"></div>
-        <div class="equity-header">
-          <span>Backtest Equity Curve ($)</span>
-          <span id="equity-summary">—</span>
+
+        <!-- Graph 2 & 3: Oscillator + Equity/Drawdown Grid -->
+        <div class="subgraphs-grid">
+          <div class="chart-card">
+            <div class="subgraph-header">
+              <span>Momentum & Trend Strength Graph (RSI 14 / ADX 14)</span>
+              <span class="legend-inline">
+                <i class="dot ema9"></i>RSI
+                <i class="dot ema21"></i>ADX
+              </span>
+            </div>
+            <div id="oscillator-chart" class="subgraph-container"></div>
+          </div>
+
+          <div class="chart-card">
+            <div class="subgraph-header">
+              <span>Equity Curve ($) & Drawdown (%)</span>
+              <span id="equity-summary">—</span>
+            </div>
+            <div id="equity-chart" class="subgraph-container"></div>
+          </div>
         </div>
-        <div id="equity-chart" class="equity-container"></div>
+
+        <!-- Multi-Asset Setups Scanner -->
+        <div class="chart-card scanner-card">
+          <div class="subgraph-header">
+            <span>Live Setups Scanner (EMA VWAP Liquidity Reaction across Markets)</span>
+            <button id="btn-scan-setups" class="btn btn-ghost btn-sm">Scan All Markets</button>
+          </div>
+          <div class="scanner-table-wrap">
+            <table class="scanner-table">
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Price</th>
+                  <th>Confluence</th>
+                  <th>Sweep</th>
+                  <th>SSL / BSL Liquidity</th>
+                  <th>VWAP</th>
+                  <th>Signal</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="scanner-tbody">
+                <tr><td colspan="8" class="pos-empty">Loading live setups...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
+      <!-- TradingView Pro Widget View -->
       <div class="chart-card hidden" id="tv-widget-panel">
         <div id="tradingview_pro_widget" class="tv-pro-container"></div>
       </div>
     </section>
 
     <aside class="sidebar">
+      <!-- Live Setup & Confluence Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Active Setup & Liquidity</h2>
+          <span class="score-pill" id="setup-score-badge">0%</span>
+        </div>
+
+        <div class="checklist-grid">
+          <div class="check-item" id="chk-ema"><span>EMA Structure</span><strong>—</strong></div>
+          <div class="check-item" id="chk-vwap"><span>VWAP Reaction</span><strong>—</strong></div>
+          <div class="check-item" id="chk-sweep"><span>Liquidity Sweep</span><strong>—</strong></div>
+          <div class="check-item" id="chk-wick"><span>Rejection Wick</span><strong>—</strong></div>
+        </div>
+
+        <div class="setup-levels">
+          <div class="lvl"><span>SSL (Swing Low)</span><strong id="setup-ssl">—</strong></div>
+          <div class="lvl"><span>Session VWAP</span><strong id="setup-vwap">—</strong></div>
+          <div class="lvl"><span>BSL (Swing High)</span><strong id="setup-bsl">—</strong></div>
+          <div class="lvl"><span>Suggested SL</span><strong class="pos-text-red" id="setup-sl">—</strong></div>
+          <div class="lvl"><span>Suggested TP</span><strong class="pos-text-green" id="setup-tp">—</strong></div>
+          <div class="lvl"><span>Sweep Event</span><strong id="setup-sweep-type">NONE</strong></div>
+        </div>
+
+        <div class="worker-actions">
+          <button id="btn-take-setup" class="btn btn-success">⚡ Paper Trade Setup</button>
+          <button id="btn-close-setup" class="btn btn-danger">Close Position</button>
+        </div>
+      </div>
+
+      <!-- Strategy Settings Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Strategy Settings</h2>
+          <button id="btn-reset-settings" class="btn btn-ghost btn-sm">Defaults</button>
+        </div>
+
+        <div class="settings-grid">
+          <label class="field">
+            <span>Fast EMA</span>
+            <input type="number" id="set-fast-ema" value="9" min="2" max="100" />
+          </label>
+          <label class="field">
+            <span>Slow EMA</span>
+            <input type="number" id="set-slow-ema" value="21" min="5" max="200" />
+          </label>
+          <label class="field">
+            <span>Macro EMA</span>
+            <input type="number" id="set-macro-ema" value="200" min="20" max="500" />
+          </label>
+          <label class="field">
+            <span>Liq. Lookback</span>
+            <input type="number" id="set-lookback" value="20" min="5" max="100" />
+          </label>
+          <label class="field">
+            <span>Min Wick (0-1)</span>
+            <input type="number" id="set-wick" value="0.35" step="0.05" min="0.05" max="0.9" />
+          </label>
+          <label class="field">
+            <span>Risk % / Trade</span>
+            <input type="number" id="set-risk" value="2.0" step="0.25" min="0.25" max="10" />
+          </label>
+          <label class="field">
+            <span>Target R:R</span>
+            <input type="number" id="set-rr" value="2.5" step="0.25" min="1.0" max="10" />
+          </label>
+          <label class="field">
+            <span>Initial Capital ($)</span>
+            <input type="number" id="set-capital" value="10000" step="500" min="100" />
+          </label>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="set-trailing" checked />
+          <span>Enable Chandelier ATR Trailing Stop</span>
+        </label>
+
+        <button id="btn-apply-settings" class="btn btn-primary full-width">Apply Settings & Update Graphs</button>
+      </div>
+
       <!-- Paper Trading Worker Card -->
       <div class="panel">
         <div class="panel-header">
@@ -127,7 +258,7 @@
           <button id="btn-worker-start" class="btn btn-success">▶ Start Worker</button>
           <button id="btn-worker-stop" class="btn btn-danger" disabled>■ Stop</button>
           <button id="btn-worker-tick" class="btn btn-ghost">Tick Now</button>
-          <button id="btn-worker-reset" class="btn btn-ghost">Reset</button>
+          <button id="btn-worker-reset" class="btn btn-ghost">Reset $10k</button>
         </div>
 
         <div class="stats-grid">
@@ -142,36 +273,25 @@
         </div>
 
         <div class="position-box" id="position-box">
-          <div class="pos-empty">No open position (Cash Protected / Flat)</div>
+          <div class="pos-empty">No open position (Flat)</div>
         </div>
 
-        <div class="panel-subheader">Worker Execution Log</div>
-        <div class="log-list" id="worker-logs"></div>
-      </div>
-
-      <!-- TradingView Webhook Bridge Card -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2>TradingView Bridge</h2>
-          <span class="worker-status-dot running">WEBHOOK READY</span>
-        </div>
         <div class="webhook-url-box">
-          <span class="metric-label">Webhook Endpoint (POST)</span>
+          <span class="metric-label">TradingView Webhook (POST)</span>
           <code id="webhook-url">http://localhost:3000/api/webhook/tradingview</code>
         </div>
-        <div class="worker-actions">
-          <button id="btn-sim-tv-buy" class="btn btn-success">Sim TV BUY</button>
-          <button id="btn-sim-tv-sell" class="btn btn-danger">Sim TV SELL</button>
-        </div>
+
+        <div class="panel-subheader">Worker Log</div>
+        <div class="log-list" id="worker-logs"></div>
       </div>
 
       <!-- Backtest Summary Card -->
       <div class="panel">
         <div class="panel-header">
           <h2>Backtest Performance</h2>
-          <span class="metric-sub" id="bt-candles">500 candles</span>
+          <span class="metric-sub" id="bt-trade-count-label">0 trades</span>
         </div>
-        <div class="stats-grid four">
+        <div class="stats-grid">
           <div class="stat">
             <span>Return</span>
             <strong id="bt-return">—</strong>
@@ -190,7 +310,7 @@
           </div>
         </div>
 
-        <div class="panel-subheader">Simulated Trades (<span id="bt-trade-count">0</span>)</div>
+        <div class="panel-subheader">Executed Backtest Trades (<span id="bt-trade-count">0</span>)</div>
         <div class="trades-list" id="bt-trades"></div>
       </div>
     </aside>
