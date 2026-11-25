@@ -94,6 +94,74 @@ function classifyRegime(adx: number, close: number, ema200: number | null) {
   return { regime: 'CHOP / SELECTIVE', badge: 'chop' };
 }
 
+function computeMarketAnalytics(
+  candles: Candle[],
+  symbol: string,
+  timeframe: string,
+  strategyId: StrategyId,
+  settings: StrategySettings
+) {
+  const emaFast = TechnicalIndicators.getEMA(candles, settings.fastEmaPeriod);
+  const emaSlow = TechnicalIndicators.getEMA(candles, settings.slowEmaPeriod);
+  const emaMacro = TechnicalIndicators.getEMA(candles, settings.macroEmaPeriod);
+  const adxList = TechnicalIndicators.getADX(candles, 14);
+  const rsiList = TechnicalIndicators.getRSI(candles, 14);
+  const atrList = TechnicalIndicators.getATR(candles, 14);
+  const vwapList = TechnicalIndicators.getSessionVWAP(candles);
+
+  const strategy = createStrategy(strategyId, settings);
+  const signal = strategy.analyze(candles);
+  const liquidityDiagSignal = strategyId === 'ema_vwap_liquidity'
+    ? signal
+    : new EmaVwapLiquidityStrategy(settings).analyze(candles);
+
+  const latestCandle = candles[candles.length - 1];
+  const latestAdx = adxList.length > 0 ? adxList[adxList.length - 1].adx : 0;
+  const latestRsi = rsiList.length > 0 ? rsiList[rsiList.length - 1] : 50;
+  const latestAtr = atrList.length > 0 ? atrList[atrList.length - 1] : 0;
+  const latestMacro = emaMacro.length > 0 ? emaMacro[emaMacro.length - 1] : null;
+  const latestVwap = vwapList.length > 0 ? vwapList[vwapList.length - 1].vwap : latestCandle.close;
+  const regimeInfo = classifyRegime(latestAdx, latestCandle.close, latestMacro);
+
+  return {
+    strategyName: strategy.name,
+    indicators: {
+      emaFast: alignSeries(candles, emaFast),
+      emaSlow: alignSeries(candles, emaSlow),
+      emaMacro: alignSeries(candles, emaMacro),
+      vwap: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.vwap.toFixed(4)) })),
+      vwapUpper: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.upper.toFixed(4)) })),
+      vwapLower: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.lower.toFixed(4)) })),
+      rsiSeries: alignSeries(candles, rsiList),
+      adxSeries: alignSeries(candles, adxList.map(a => a.adx))
+    },
+    metrics: {
+      adx: Number(latestAdx.toFixed(2)),
+      rsi: Number(latestRsi.toFixed(2)),
+      atr: Number(latestAtr.toFixed(4)),
+      ema200: latestMacro ? Number(latestMacro.toFixed(2)) : null,
+      vwap: Number(latestVwap.toFixed(2)),
+      regime: regimeInfo.regime,
+      regimeBadge: regimeInfo.badge
+    },
+    signal,
+    diagnostics: liquidityDiagSignal.diagnostics || null
+  };
+}
+
+function mergeLatestCandles(base: Candle[], latestBatch: Candle[]): Candle[] {
+  const merged = [...base];
+  for (const incoming of latestBatch) {
+    const last = merged[merged.length - 1];
+    if (!last || incoming.timestamp > last.timestamp) {
+      merged.push(incoming);
+    } else if (incoming.timestamp === last.timestamp) {
+      merged[merged.length - 1] = incoming;
+    }
+  }
+  return merged.length > 500 ? merged.slice(-500) : merged;
+}
+
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<boolean> {
   if (!url.pathname.startsWith('/api/')) return false;
 
@@ -125,35 +193,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         exchange.fetchTicker(symbol)
       ]);
 
-      const emaFast = TechnicalIndicators.getEMA(candles, settings.fastEmaPeriod);
-      const emaSlow = TechnicalIndicators.getEMA(candles, settings.slowEmaPeriod);
-      const emaMacro = TechnicalIndicators.getEMA(candles, settings.macroEmaPeriod);
-      const adxList = TechnicalIndicators.getADX(candles, 14);
-      const rsiList = TechnicalIndicators.getRSI(candles, 14);
-      const atrList = TechnicalIndicators.getATR(candles, 14);
-      const vwapList = TechnicalIndicators.getSessionVWAP(candles);
-
-      const strategy = createStrategy(strategyId, settings);
-      const signal = strategy.analyze(candles);
-
-      // Always compute EMA VWAP Liquidity setup diagnostics so Setups panel stays rich
-      const liquidityDiagSignal = strategyId === 'ema_vwap_liquidity'
-        ? signal
-        : new EmaVwapLiquidityStrategy(settings).analyze(candles);
-
+      const analytics = computeMarketAnalytics(candles, symbol, timeframe, strategyId, settings);
       const latestCandle = candles[candles.length - 1];
-      const latestAdx = adxList.length > 0 ? adxList[adxList.length - 1].adx : 0;
-      const latestRsi = rsiList.length > 0 ? rsiList[rsiList.length - 1] : 50;
-      const latestAtr = atrList.length > 0 ? atrList[atrList.length - 1] : 0;
-      const latestMacro = emaMacro.length > 0 ? emaMacro[emaMacro.length - 1] : null;
-      const latestVwap = vwapList.length > 0 ? vwapList[vwapList.length - 1].vwap : latestCandle.close;
-      const regimeInfo = classifyRegime(latestAdx, latestCandle.close, latestMacro);
 
       sendJson(res, 200, {
         symbol,
         timeframe,
         strategyId,
-        strategyName: strategy.name,
+        strategyName: analytics.strategyName,
         settings,
         candles: candles.map(c => ({
           time: Math.floor(c.timestamp / 1000),
@@ -163,25 +210,8 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           close: c.close,
           volume: c.volume
         })),
-        indicators: {
-          emaFast: alignSeries(candles, emaFast),
-          emaSlow: alignSeries(candles, emaSlow),
-          emaMacro: alignSeries(candles, emaMacro),
-          vwap: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.vwap.toFixed(4)) })),
-          vwapUpper: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.upper.toFixed(4)) })),
-          vwapLower: vwapList.map(v => ({ time: Math.floor(v.timestamp / 1000), value: Number(v.lower.toFixed(4)) })),
-          rsiSeries: alignSeries(candles, rsiList),
-          adxSeries: alignSeries(candles, adxList.map(a => a.adx))
-        },
-        metrics: {
-          adx: Number(latestAdx.toFixed(2)),
-          rsi: Number(latestRsi.toFixed(2)),
-          atr: Number(latestAtr.toFixed(4)),
-          ema200: latestMacro ? Number(latestMacro.toFixed(2)) : null,
-          vwap: Number(latestVwap.toFixed(2)),
-          regime: regimeInfo.regime,
-          regimeBadge: regimeInfo.badge
-        },
+        indicators: analytics.indicators,
+        metrics: analytics.metrics,
         ticker: {
           last: ticker.last ?? latestCandle.close,
           changePercent: ticker.percentage ?? 0,
@@ -189,8 +219,116 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           low: ticker.low ?? latestCandle.low,
           volume: ticker.baseVolume ?? 0
         },
-        signal,
-        diagnostics: liquidityDiagSignal.diagnostics || null
+        signal: analytics.signal,
+        diagnostics: analytics.diagnostics
+      });
+      return true;
+    }
+
+    if (url.pathname === '/api/stream' && req.method === 'GET') {
+      const symbol = url.searchParams.get('symbol') || 'XAU/USD';
+      const timeframe = url.searchParams.get('timeframe') || '1h';
+      const strategyId = (url.searchParams.get('strategy') || 'ema_vwap_liquidity') as StrategyId;
+      const settings = parseSettings(Object.fromEntries(url.searchParams.entries()));
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'Access-Control-Allow-Origin': '*'
+      });
+      res.write(': connected\n\n');
+
+      let closed = false;
+      let cachedCandles = await exchange.fetchCandles(symbol, timeframe, 260);
+      let isBusy = false;
+
+      const pushTick = async () => {
+        if (closed || isBusy) return;
+        isBusy = true;
+        try {
+          const [recentCandles, ticker] = await Promise.all([
+            exchange.fetchCandles(symbol, timeframe, 3),
+            exchange.fetchTicker(symbol)
+          ]);
+          cachedCandles = mergeLatestCandles(cachedCandles, recentCandles);
+          const analytics = computeMarketAnalytics(cachedCandles, symbol, timeframe, strategyId, settings);
+          const latest = cachedCandles[cachedCandles.length - 1];
+          const livePrice = ticker.last ?? latest.close;
+
+          // Sync live mark price onto active candle close for responsive ticking
+          const liveCandle = {
+            time: Math.floor(latest.timestamp / 1000),
+            open: latest.open,
+            high: Math.max(latest.high, livePrice),
+            low: Math.min(latest.low, livePrice),
+            close: livePrice,
+            volume: latest.volume
+          };
+
+          const workerState = paperTrader.getState();
+          let liveEquity = workerState.equity;
+          let liveUnrealized = workerState.unrealizedPnl;
+          let liveUnrealizedPct = workerState.unrealizedPnlPercent;
+          if (workerState.position && workerState.position.symbol === symbol) {
+            const posVal = workerState.position.amount * livePrice;
+            const costBasis = workerState.position.amount * workerState.position.entryPrice;
+            liveUnrealized = posVal - costBasis;
+            liveUnrealizedPct = ((livePrice - workerState.position.entryPrice) / workerState.position.entryPrice) * 100;
+            liveEquity = workerState.cashBalance + posVal;
+          }
+
+          const payload = {
+            symbol,
+            timeframe,
+            timestamp: Date.now(),
+            candle: liveCandle,
+            ticker: {
+              last: livePrice,
+              changePercent: ticker.percentage ?? 0,
+              high: ticker.high ?? latest.high,
+              low: ticker.low ?? latest.low,
+              volume: ticker.baseVolume ?? 0
+            },
+            tail: {
+              emaFast: analytics.indicators.emaFast[analytics.indicators.emaFast.length - 1] || null,
+              emaSlow: analytics.indicators.emaSlow[analytics.indicators.emaSlow.length - 1] || null,
+              emaMacro: analytics.indicators.emaMacro[analytics.indicators.emaMacro.length - 1] || null,
+              vwap: analytics.indicators.vwap[analytics.indicators.vwap.length - 1] || null,
+              vwapUpper: analytics.indicators.vwapUpper[analytics.indicators.vwapUpper.length - 1] || null,
+              vwapLower: analytics.indicators.vwapLower[analytics.indicators.vwapLower.length - 1] || null,
+              rsi: analytics.indicators.rsiSeries[analytics.indicators.rsiSeries.length - 1] || null,
+              adx: analytics.indicators.adxSeries[analytics.indicators.adxSeries.length - 1] || null
+            },
+            metrics: analytics.metrics,
+            signal: analytics.signal,
+            diagnostics: analytics.diagnostics,
+            workerLive: {
+              running: workerState.running,
+              equity: liveEquity,
+              unrealizedPnl: liveUnrealized,
+              unrealizedPnlPercent: liveUnrealizedPct
+            }
+          };
+
+          if (!closed) {
+            res.write(`event: tick\ndata: ${JSON.stringify(payload)}\n\n`);
+          }
+        } catch {
+          // Keep stream alive across transient exchange hiccups
+        } finally {
+          isBusy = false;
+        }
+      };
+
+      void pushTick();
+      const timer = setInterval(() => {
+        void pushTick();
+      }, 2000);
+
+      req.on('close', () => {
+        closed = true;
+        clearInterval(timer);
       });
       return true;
     }

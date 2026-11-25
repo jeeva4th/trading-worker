@@ -162,7 +162,12 @@
                   <label class="toggle-chip"><input type="checkbox" id="toggle-vwap" checked /><span class="swatch gold"></span>Session VWAP &amp; Bands</label>
                   <label class="toggle-chip"><input type="checkbox" id="toggle-liquidity" checked /><span class="swatch pink"></span>BSL / SSL Pools</label>
                 </div>
-                <span class="toolbar-meta" id="chart-status">Syncing market feed...</span>
+                <div class="stream-controls">
+                  <span class="stream-pill active" id="stream-status-pill"><span class="pulse-dot"></span> LIVE · 2s</span>
+                  <span class="countdown-chip mono" id="candle-countdown">--:--</span>
+                  <button class="chip-btn" id="btn-toggle-stream">Pause</button>
+                  <span class="toolbar-meta" id="chart-status">Syncing...</span>
+                </div>
               </div>
               <div id="tv-lightweight-chart" class="main-chart"></div>
             </div>

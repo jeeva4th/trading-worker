@@ -3,8 +3,13 @@ const state = {
   timeframe: '1h',
   strategy: 'ema_vwap_liquidity',
   activeView: 'terminal',
-  tvWidgetInitializedFor: null
+  tvWidgetInitializedFor: null,
+  streamEnabled: true,
+  lastTickPrice: null,
+  lastCandleTimeSec: null
 };
+
+let liveEventSource = null;
 
 let mainChart = null;
 let candleSeries = null;
@@ -332,10 +337,146 @@ async function loadMarket() {
 
     mainChart.timeScale().fitContent();
     oscillatorChart.timeScale().fitContent();
-    statusEl.textContent = `${data.candles.length} candles · Live`;
+    if (data.candles.length > 0) {
+      state.lastCandleTimeSec = data.candles[data.candles.length - 1].time;
+      state.lastTickPrice = Number(data.ticker.last);
+    }
+    statusEl.textContent = `${data.candles.length} candles`;
   } catch (err) {
     statusEl.textContent = `Error: ${err.message}`;
   }
+}
+
+function getTimeframeSeconds(tf) {
+  const map = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
+  return map[tf] || 3600;
+}
+
+function updateCountdownClock() {
+  const el = document.getElementById('candle-countdown');
+  if (!el) return;
+  const step = getTimeframeSeconds(state.timeframe);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const remaining = step - (nowSec % step);
+  const hrs = Math.floor(remaining / 3600);
+  const mins = Math.floor((remaining % 3600) / 60);
+  const secs = remaining % 60;
+  const pad = n => String(n).padStart(2, '0');
+  el.textContent = hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
+}
+
+function applyLiveTick(tick) {
+  if (!tick || !tick.candle) return;
+
+  // Update active candle & volume bar live without resetting chart zoom
+  if (!state.lastCandleTimeSec || tick.candle.time >= state.lastCandleTimeSec) {
+    state.lastCandleTimeSec = tick.candle.time;
+    candleSeries.update(tick.candle);
+    volumeSeries.update({
+      time: tick.candle.time,
+      value: tick.candle.volume,
+      color: tick.candle.close >= tick.candle.open ? 'rgba(16, 185, 129, 0.35)' : 'rgba(244, 63, 94, 0.35)'
+    });
+  }
+
+  // Update tail indicators smoothly if timestamp >= series end
+  if (tick.tail?.emaFast && tick.tail.emaFast.time >= tick.candle.time) emaFastSeries.update(tick.tail.emaFast);
+  if (tick.tail?.emaSlow && tick.tail.emaSlow.time >= tick.candle.time) emaSlowSeries.update(tick.tail.emaSlow);
+  if (tick.tail?.emaMacro && tick.tail.emaMacro.time >= tick.candle.time) emaMacroSeries.update(tick.tail.emaMacro);
+  if (tick.tail?.vwap && tick.tail.vwap.time >= tick.candle.time) vwapSeries.update(tick.tail.vwap);
+  if (tick.tail?.vwapUpper && tick.tail.vwapUpper.time >= tick.candle.time) vwapUpperSeries.update(tick.tail.vwapUpper);
+  if (tick.tail?.vwapLower && tick.tail.vwapLower.time >= tick.candle.time) vwapLowerSeries.update(tick.tail.vwapLower);
+  if (tick.tail?.rsi && tick.tail.rsi.time >= tick.candle.time) rsiSeries.update(tick.tail.rsi);
+  if (tick.tail?.adx && tick.tail.adx.time >= tick.candle.time) adxSeries.update(tick.tail.adx);
+
+  // Flash Price Tick
+  const priceEl = document.getElementById('metric-price');
+  const newPrice = Number(tick.ticker.last);
+  priceEl.textContent = `$${newPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+  if (state.lastTickPrice !== null && newPrice !== state.lastTickPrice) {
+    priceEl.classList.remove('price-flash-up', 'price-flash-down');
+    void priceEl.offsetWidth;
+    priceEl.classList.add(newPrice > state.lastTickPrice ? 'price-flash-up' : 'price-flash-down');
+  }
+  state.lastTickPrice = newPrice;
+
+  const change = Number(tick.ticker.changePercent || 0);
+  const changeEl = document.getElementById('metric-change');
+  changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+  changeEl.className = `change-badge ${change >= 0 ? 'up' : 'down'}`;
+
+  document.getElementById('metric-vwap').textContent = `Session VWAP: $${tick.metrics.vwap.toLocaleString()}`;
+  const regimeEl = document.getElementById('metric-regime');
+  regimeEl.textContent = tick.metrics.regime;
+  regimeEl.className = `regime-tag ${tick.metrics.regimeBadge}`;
+  document.getElementById('metric-adx').textContent = `ADX ${tick.metrics.adx} · RSI ${tick.metrics.rsi} · ATR $${tick.metrics.atr}`;
+  document.getElementById('metric-ema200').textContent = `200 EMA Anchor: $${tick.metrics.ema200 ?? '—'}`;
+
+  const sigEl = document.getElementById('metric-signal');
+  sigEl.textContent = tick.signal.type;
+  sigEl.className = `signal-tag ${tick.signal.type.toLowerCase()}`;
+  document.getElementById('metric-signal-reason').textContent = tick.signal.reason;
+
+  if (tick.diagnostics) renderSetupDiagnostics(tick.diagnostics);
+
+  if (tick.workerLive) {
+    document.getElementById('metric-equity').textContent = `$${tick.workerLive.equity.toFixed(2)}`;
+    const unrEl = document.getElementById('metric-unrealized');
+    unrEl.textContent = `Unrealized: ${tick.workerLive.unrealizedPnl >= 0 ? '+' : ''}$${tick.workerLive.unrealizedPnl.toFixed(2)}`;
+    unrEl.className = `kpi-sub mono ${tick.workerLive.unrealizedPnl >= 0 ? 'green' : 'red'}`;
+  }
+
+  document.getElementById('chart-status').textContent = `Tick ${new Date(tick.timestamp).toLocaleTimeString()}`;
+}
+
+function stopLiveStream() {
+  if (liveEventSource) {
+    liveEventSource.close();
+    liveEventSource = null;
+  }
+  const pill = document.getElementById('stream-status-pill');
+  const btn = document.getElementById('btn-toggle-stream');
+  if (pill) {
+    pill.classList.remove('active');
+    pill.innerHTML = '<span class="pulse-dot"></span> PAUSED';
+  }
+  if (btn) btn.textContent = 'Resume';
+}
+
+function startLiveStream() {
+  stopLiveStream();
+  if (!state.streamEnabled) return;
+
+  const s = getSettingsFromUI();
+  const qs = new URLSearchParams({
+    symbol: state.symbol,
+    timeframe: state.timeframe,
+    strategy: state.strategy,
+    fastEma: String(s.fastEmaPeriod),
+    slowEma: String(s.slowEmaPeriod),
+    macroEma: String(s.macroEmaPeriod),
+    lookback: String(s.liquidityLookback),
+    minWick: String(s.minWickRatio),
+    rr: String(s.riskRewardRatio)
+  });
+
+  const pill = document.getElementById('stream-status-pill');
+  const btn = document.getElementById('btn-toggle-stream');
+  if (pill) {
+    pill.classList.add('active');
+    pill.innerHTML = '<span class="pulse-dot"></span> LIVE · 2s';
+  }
+  if (btn) btn.textContent = 'Pause';
+
+  liveEventSource = new EventSource(`/api/stream?${qs.toString()}`);
+  liveEventSource.addEventListener('tick', e => {
+    try {
+      const tick = JSON.parse(e.data);
+      applyLiveTick(tick);
+    } catch {
+      // Ignore malformed tick
+    }
+  });
 }
 
 async function runBacktest() {
@@ -459,7 +600,8 @@ window.selectScannedAsset = async function selectScannedAsset(symbol) {
   syncAssetPills();
   switchView('terminal');
   await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
-  showToast(`Loaded ${symbol} in Terminal`);
+  startLiveStream();
+  showToast(`Loaded ${symbol} live stream`);
 };
 
 window.quickPaperBuy = async function quickPaperBuy(symbol) {
@@ -550,6 +692,7 @@ function bindEvents() {
       state.symbol = btn.dataset.sym;
       syncAssetPills();
       await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
+      startLiveStream();
       if (state.activeView === 'tvpro') renderTradingViewProWidget();
     });
   });
@@ -560,6 +703,7 @@ function bindEvents() {
       btn.classList.add('active');
       state.timeframe = btn.dataset.tf;
       await Promise.all([loadMarket(), runBacktest(), scanSetups()]);
+      startLiveStream();
       if (state.activeView === 'tvpro') renderTradingViewProWidget();
     });
   });
@@ -567,7 +711,19 @@ function bindEvents() {
   document.getElementById('strategy-select').addEventListener('change', async e => {
     state.strategy = e.target.value;
     await Promise.all([loadMarket(), runBacktest()]);
+    startLiveStream();
     showToast(`Switched model to ${e.target.options[e.target.selectedIndex].text}`);
+  });
+
+  document.getElementById('btn-toggle-stream').addEventListener('click', () => {
+    state.streamEnabled = !state.streamEnabled;
+    if (state.streamEnabled) {
+      startLiveStream();
+      showToast('Live 2s stream resumed');
+    } else {
+      stopLiveStream();
+      showToast('Live stream paused');
+    }
   });
 
   document.getElementById('toggle-emas').addEventListener('change', applyLayerVisibility);
@@ -588,6 +744,7 @@ function bindEvents() {
       syncAssetPills();
       renderWorkerState(res.workerState);
       await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest()]);
+      startLiveStream();
       showToast(`Analyzed ${state.symbol} (${state.timeframe})`);
     } catch (err) {
       showToast(`Analyze failed: ${err.message}`);
@@ -674,7 +831,8 @@ function bindEvents() {
       body: JSON.stringify({ symbol: state.symbol, timeframe: state.timeframe, strategyId: state.strategy, settings })
     });
     await Promise.all([loadMarket(), runBacktest(), scanSetups()]);
-    showToast('Settings applied & graphs updated');
+    startLiveStream();
+    showToast('Settings applied & live stream updated');
   });
 
   document.getElementById('btn-reset-settings').addEventListener('click', async () => {
@@ -725,6 +883,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   initCharts();
   bindEvents();
   await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest(), refreshWorkerStatus(), scanSetups()]);
+  startLiveStream();
+  updateCountdownClock();
+  setInterval(updateCountdownClock, 1000);
 
   if (urlView) switchView(urlView);
   setInterval(refreshWorkerStatus, 5000);
