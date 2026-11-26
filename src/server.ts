@@ -17,7 +17,7 @@ const WEB_DIR = path.join(process.cwd(), 'web');
 const exchange = new ExchangeConnector('binance');
 const telegramNotifier = new TelegramNotifier();
 const paperTrader = new PaperTrader('binance', path.join(process.cwd(), 'data'), telegramNotifier);
-const liveTickStateCache = new Map<string, { candles: Candle[]; analytics: ReturnType<typeof computeMarketAnalytics>; analyticsAt: number }>();
+const liveTickStateCache = new Map<string, { candles: Candle[]; open24h: number; open24hAt: number }>();
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -242,23 +242,33 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
       let entry = liveTickStateCache.get(cacheKey);
       if (!entry) {
-        const baseCandles = await exchange.fetchCandles(symbol, timeframe, 260);
+        const [baseCandles, ticker24h] = await Promise.all([
+          exchange.fetchCandles(symbol, timeframe, 260),
+          exchange.fetchTicker(symbol).catch(() => null)
+        ]);
+        const latestClose = baseCandles[baseCandles.length - 1].close;
+        const pct = ticker24h?.percentage ?? 0;
+        const open24h = pct !== 0 ? latestClose / (1 + pct / 100) : latestClose;
         entry = {
           candles: baseCandles,
-          analytics: computeMarketAnalytics(baseCandles, symbol, timeframe, strategyId, settings),
-          analyticsAt: Date.now()
+          open24h,
+          open24hAt: Date.now()
         };
         liveTickStateCache.set(cacheKey, entry);
+      } else if (Date.now() - entry.open24hAt > 60000) {
+        const ticker24h = await exchange.fetchTicker(symbol).catch(() => null);
+        if (ticker24h?.last && ticker24h.percentage !== undefined) {
+          entry.open24h = ticker24h.last / (1 + ticker24h.percentage / 100);
+          entry.open24hAt = Date.now();
+        }
       }
 
-      const prevLen = entry.candles.length;
       if (recentCandles && recentCandles.length > 0) {
         entry.candles = mergeLatestCandles(entry.candles, recentCandles);
       }
       const latest = entry.candles[entry.candles.length - 1];
       const livePrice = fastPrice ?? latest.close;
 
-      // Keep latest candle close/high/low synced to live ticker price
       const liveCandle = {
         time: Math.floor(latest.timestamp / 1000),
         open: latest.open,
@@ -274,24 +284,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         close: livePrice
       };
 
-      const barRolled = entry.candles.length !== prevLen;
-      const shouldRefreshAnalytics = barRolled || Date.now() - entry.analyticsAt >= 3500;
-      if (shouldRefreshAnalytics) {
-        entry.analytics = computeMarketAnalytics(entry.candles, symbol, timeframe, strategyId, settings);
-        entry.analyticsAt = Date.now();
-      }
+      const analytics = computeMarketAnalytics(entry.candles, symbol, timeframe, strategyId, settings);
+      const changePercent = entry.open24h > 0 ? ((livePrice - entry.open24h) / entry.open24h) * 100 : 0;
 
       const workerState = paperTrader.getState();
       let liveEquity = workerState.equity;
       let liveUnrealized = workerState.unrealizedPnl;
       let liveUnrealizedPct = workerState.unrealizedPnlPercent;
       let markPrice = workerState.lastPrice || livePrice;
-      if (workerState.position && workerState.position.symbol === symbol) {
-        markPrice = livePrice;
-        const posVal = workerState.position.amount * livePrice;
+      if (workerState.position) {
+        const posPrice = workerState.position.symbol === symbol
+          ? livePrice
+          : ((await exchange.fetchFastPrice(workerState.position.symbol).catch(() => null)) ?? livePrice);
+        markPrice = posPrice;
+        const posVal = workerState.position.amount * posPrice;
         const costBasis = workerState.position.amount * workerState.position.entryPrice;
         liveUnrealized = posVal - costBasis;
-        liveUnrealizedPct = ((livePrice - workerState.position.entryPrice) / workerState.position.entryPrice) * 100;
+        liveUnrealizedPct = ((posPrice - workerState.position.entryPrice) / workerState.position.entryPrice) * 100;
         liveEquity = workerState.cashBalance + posVal;
       }
 
@@ -302,25 +311,24 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         candle: liveCandle,
         ticker: {
           last: livePrice,
+          changePercent: Number(changePercent.toFixed(3)),
           high: liveCandle.high,
           low: liveCandle.low,
           volume: liveCandle.volume
         },
-        tail: shouldRefreshAnalytics
-          ? {
-              emaFast: entry.analytics.indicators.emaFast[entry.analytics.indicators.emaFast.length - 1] || null,
-              emaSlow: entry.analytics.indicators.emaSlow[entry.analytics.indicators.emaSlow.length - 1] || null,
-              emaMacro: entry.analytics.indicators.emaMacro[entry.analytics.indicators.emaMacro.length - 1] || null,
-              vwap: entry.analytics.indicators.vwap[entry.analytics.indicators.vwap.length - 1] || null,
-              vwapUpper: entry.analytics.indicators.vwapUpper[entry.analytics.indicators.vwapUpper.length - 1] || null,
-              vwapLower: entry.analytics.indicators.vwapLower[entry.analytics.indicators.vwapLower.length - 1] || null,
-              rsi: entry.analytics.indicators.rsiSeries[entry.analytics.indicators.rsiSeries.length - 1] || null,
-              adx: entry.analytics.indicators.adxSeries[entry.analytics.indicators.adxSeries.length - 1] || null
-            }
-          : null,
-        metrics: entry.analytics.metrics,
-        signal: entry.analytics.signal,
-        diagnostics: entry.analytics.diagnostics,
+        tail: {
+          emaFast: analytics.indicators.emaFast[analytics.indicators.emaFast.length - 1] || null,
+          emaSlow: analytics.indicators.emaSlow[analytics.indicators.emaSlow.length - 1] || null,
+          emaMacro: analytics.indicators.emaMacro[analytics.indicators.emaMacro.length - 1] || null,
+          vwap: analytics.indicators.vwap[analytics.indicators.vwap.length - 1] || null,
+          vwapUpper: analytics.indicators.vwapUpper[analytics.indicators.vwapUpper.length - 1] || null,
+          vwapLower: analytics.indicators.vwapLower[analytics.indicators.vwapLower.length - 1] || null,
+          rsi: analytics.indicators.rsiSeries[analytics.indicators.rsiSeries.length - 1] || null,
+          adx: analytics.indicators.adxSeries[analytics.indicators.adxSeries.length - 1] || null
+        },
+        metrics: analytics.metrics,
+        signal: analytics.signal,
+        diagnostics: analytics.diagnostics,
         workerLive: {
           running: workerState.running,
           symbol: workerState.symbol,

@@ -456,21 +456,46 @@ function applyLiveTick(tick) {
     document.getElementById('metric-signal-reason').textContent = tick.signal.reason;
   }
 
-  if (tick.diagnostics) renderSetupDiagnostics(tick.diagnostics);
+  if (tick.diagnostics) {
+    renderSetupDiagnostics(tick.diagnostics);
+    updateDynamicChartLines(tick.diagnostics, tick.signal);
+  }
 
   if (tick.workerLive) {
     const wl = tick.workerLive;
     document.getElementById('metric-equity').textContent = `$${wl.equity.toFixed(2)}`;
+    document.getElementById('worker-cash').textContent = `$${wl.cashBalance.toFixed(2)}`;
+    document.getElementById('metric-winrate').textContent = `WR: ${(wl.winRate || 0).toFixed(1)}% (${wl.tradesCount || 0}t)`;
+
+    const realEl = document.getElementById('worker-realized');
+    const realPnl = wl.realizedPnl || 0;
+    realEl.textContent = `${realPnl >= 0 ? '+' : ''}$${realPnl.toFixed(2)}`;
+    realEl.className = realPnl >= 0 ? 'green' : 'red';
+
     const unrEl = document.getElementById('metric-unrealized');
     unrEl.textContent = `Unrealized: ${wl.unrealizedPnl >= 0 ? '+' : ''}$${wl.unrealizedPnl.toFixed(2)} (${wl.unrealizedPnlPercent >= 0 ? '+' : ''}${wl.unrealizedPnlPercent.toFixed(2)}%)`;
     unrEl.className = `kpi-sub mono ${wl.unrealizedPnl >= 0 ? 'green' : 'red'}`;
 
-    if (wl.position) {
-      renderPositionCard(wl.position, wl.unrealizedPnl, wl.unrealizedPnlPercent, wl.markPrice);
-    }
+    renderPositionCard(wl.position, wl.unrealizedPnl, wl.unrealizedPnlPercent, wl.markPrice);
   }
 
   document.getElementById('chart-status').textContent = `Tick #${state.tickSeq} · ${new Date(tick.timestamp).toLocaleTimeString()}`;
+}
+
+function updateDynamicChartLines(diagnostics, signal) {
+  clearDynamicPriceLines();
+  if (document.getElementById('toggle-liquidity').checked && diagnostics) {
+    dynamicPriceLines.push(
+      candleSeries.createPriceLine({ price: diagnostics.buySideLiquidity, color: '#ec4899', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'BSL' }),
+      candleSeries.createPriceLine({ price: diagnostics.sellSideLiquidity, color: '#38bdf8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, title: 'SSL' })
+    );
+  }
+  if (signal?.stopLoss || diagnostics?.suggestedStopLoss) {
+    dynamicPriceLines.push(candleSeries.createPriceLine({ price: signal?.stopLoss || diagnostics.suggestedStopLoss, color: '#f43f5e', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'SL' }));
+  }
+  if (signal?.takeProfit || diagnostics?.suggestedTakeProfit) {
+    dynamicPriceLines.push(candleSeries.createPriceLine({ price: signal?.takeProfit || diagnostics.suggestedTakeProfit, color: '#10b981', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'TP' }));
+  }
 }
 
 function stopLiveStream() {
@@ -1051,6 +1076,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   void loadTelegramConfig();
   void runBacktest();
   void loadMtfMatrix();
+  setInterval(() => { if (!document.hidden) void loadMtfMatrix(); }, 10000);
   setTimeout(() => void scanSetups(), 1200);
-  setInterval(refreshWorkerStatus, 5000);
+  setInterval(() => { if (!document.hidden) void refreshWorkerStatus(); }, 5000);
 });
