@@ -400,22 +400,28 @@ function applyLiveTick(tick) {
   }
   state.lastTickPrice = newPrice;
 
-  const change = Number(tick.ticker.changePercent || 0);
-  const changeEl = document.getElementById('metric-change');
-  changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-  changeEl.className = `change-badge ${change >= 0 ? 'up' : 'down'}`;
+  if (tick.ticker && tick.ticker.changePercent !== undefined) {
+    const change = Number(tick.ticker.changePercent || 0);
+    const changeEl = document.getElementById('metric-change');
+    changeEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    changeEl.className = `change-badge ${change >= 0 ? 'up' : 'down'}`;
+  }
 
-  document.getElementById('metric-vwap').textContent = `Session VWAP: $${tick.metrics.vwap.toLocaleString()}`;
-  const regimeEl = document.getElementById('metric-regime');
-  regimeEl.textContent = tick.metrics.regime;
-  regimeEl.className = `regime-tag ${tick.metrics.regimeBadge}`;
-  document.getElementById('metric-adx').textContent = `ADX ${tick.metrics.adx} · RSI ${tick.metrics.rsi} · ATR $${tick.metrics.atr}`;
-  document.getElementById('metric-ema200').textContent = `200 EMA Anchor: $${tick.metrics.ema200 ?? '—'}`;
+  if (tick.metrics) {
+    document.getElementById('metric-vwap').textContent = `Session VWAP: $${tick.metrics.vwap.toLocaleString()}`;
+    const regimeEl = document.getElementById('metric-regime');
+    regimeEl.textContent = tick.metrics.regime;
+    regimeEl.className = `regime-tag ${tick.metrics.regimeBadge}`;
+    document.getElementById('metric-adx').textContent = `ADX ${tick.metrics.adx} · RSI ${tick.metrics.rsi} · ATR $${tick.metrics.atr}`;
+    document.getElementById('metric-ema200').textContent = `200 EMA Anchor: $${tick.metrics.ema200 ?? '—'}`;
+  }
 
-  const sigEl = document.getElementById('metric-signal');
-  sigEl.textContent = tick.signal.type;
-  sigEl.className = `signal-tag ${tick.signal.type.toLowerCase()}`;
-  document.getElementById('metric-signal-reason').textContent = tick.signal.reason;
+  if (tick.signal) {
+    const sigEl = document.getElementById('metric-signal');
+    sigEl.textContent = tick.signal.type;
+    sigEl.className = `signal-tag ${tick.signal.type.toLowerCase()}`;
+    document.getElementById('metric-signal-reason').textContent = tick.signal.reason;
+  }
 
   if (tick.diagnostics) renderSetupDiagnostics(tick.diagnostics);
 
@@ -464,7 +470,7 @@ function startLiveStream() {
   const btn = document.getElementById('btn-toggle-stream');
   if (pill) {
     pill.classList.add('active');
-    pill.innerHTML = '<span class="pulse-dot"></span> LIVE · 2s';
+    pill.innerHTML = '<span class="pulse-dot"></span> LIVE · 650ms';
   }
   if (btn) btn.textContent = 'Pause';
 
@@ -882,11 +888,19 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   initCharts();
   bindEvents();
-  await Promise.all([loadMarket(), loadMtfMatrix(), runBacktest(), refreshWorkerStatus(), scanSetups()]);
+
+  // Render live price chart & start real-time 650ms stream immediately without blocking
+  await loadMarket();
   startLiveStream();
   updateCountdownClock();
   setInterval(updateCountdownClock, 1000);
 
   if (urlView) switchView(urlView);
+
+  // Load secondary analytics, MTF matrix, and scanner in background
+  void refreshWorkerStatus();
+  void runBacktest();
+  void loadMtfMatrix();
+  setTimeout(() => void scanSetups(), 1200);
   setInterval(refreshWorkerStatus, 5000);
 });

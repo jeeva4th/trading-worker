@@ -241,27 +241,33 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
       let closed = false;
       let cachedCandles = await exchange.fetchCandles(symbol, timeframe, 260);
+      let cachedAnalytics = computeMarketAnalytics(cachedCandles, symbol, timeframe, strategyId, settings);
       let isBusy = false;
+      let tickCount = 0;
 
       const pushTick = async () => {
         if (closed || isBusy) return;
         isBusy = true;
         try {
-          const [recentCandles, ticker] = await Promise.all([
-            exchange.fetchCandles(symbol, timeframe, 3),
-            exchange.fetchTicker(symbol)
-          ]);
+          const prevLen = cachedCandles.length;
+          const recentCandles = (await exchange.fetchFastKlines(symbol, timeframe, 2))
+            || (await exchange.fetchCandles(symbol, timeframe, 2));
           cachedCandles = mergeLatestCandles(cachedCandles, recentCandles);
-          const analytics = computeMarketAnalytics(cachedCandles, symbol, timeframe, strategyId, settings);
-          const latest = cachedCandles[cachedCandles.length - 1];
-          const livePrice = ticker.last ?? latest.close;
+          const barRolled = cachedCandles.length !== prevLen;
 
-          // Sync live mark price onto active candle close for responsive ticking
+          if (tickCount % 6 === 0 || barRolled) {
+            cachedAnalytics = computeMarketAnalytics(cachedCandles, symbol, timeframe, strategyId, settings);
+          }
+          tickCount += 1;
+
+          const latest = cachedCandles[cachedCandles.length - 1];
+          const livePrice = latest.close;
+
           const liveCandle = {
             time: Math.floor(latest.timestamp / 1000),
             open: latest.open,
-            high: Math.max(latest.high, livePrice),
-            low: Math.min(latest.low, livePrice),
+            high: latest.high,
+            low: latest.low,
             close: livePrice,
             volume: latest.volume
           };
@@ -282,27 +288,29 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
             symbol,
             timeframe,
             timestamp: Date.now(),
+            fastOnly: tickCount % 6 !== 1 && !barRolled,
             candle: liveCandle,
             ticker: {
               last: livePrice,
-              changePercent: ticker.percentage ?? 0,
-              high: ticker.high ?? latest.high,
-              low: ticker.low ?? latest.low,
-              volume: ticker.baseVolume ?? 0
+              high: latest.high,
+              low: latest.low,
+              volume: latest.volume
             },
-            tail: {
-              emaFast: analytics.indicators.emaFast[analytics.indicators.emaFast.length - 1] || null,
-              emaSlow: analytics.indicators.emaSlow[analytics.indicators.emaSlow.length - 1] || null,
-              emaMacro: analytics.indicators.emaMacro[analytics.indicators.emaMacro.length - 1] || null,
-              vwap: analytics.indicators.vwap[analytics.indicators.vwap.length - 1] || null,
-              vwapUpper: analytics.indicators.vwapUpper[analytics.indicators.vwapUpper.length - 1] || null,
-              vwapLower: analytics.indicators.vwapLower[analytics.indicators.vwapLower.length - 1] || null,
-              rsi: analytics.indicators.rsiSeries[analytics.indicators.rsiSeries.length - 1] || null,
-              adx: analytics.indicators.adxSeries[analytics.indicators.adxSeries.length - 1] || null
-            },
-            metrics: analytics.metrics,
-            signal: analytics.signal,
-            diagnostics: analytics.diagnostics,
+            tail: (tickCount % 6 === 1 || barRolled)
+              ? {
+                  emaFast: cachedAnalytics.indicators.emaFast[cachedAnalytics.indicators.emaFast.length - 1] || null,
+                  emaSlow: cachedAnalytics.indicators.emaSlow[cachedAnalytics.indicators.emaSlow.length - 1] || null,
+                  emaMacro: cachedAnalytics.indicators.emaMacro[cachedAnalytics.indicators.emaMacro.length - 1] || null,
+                  vwap: cachedAnalytics.indicators.vwap[cachedAnalytics.indicators.vwap.length - 1] || null,
+                  vwapUpper: cachedAnalytics.indicators.vwapUpper[cachedAnalytics.indicators.vwapUpper.length - 1] || null,
+                  vwapLower: cachedAnalytics.indicators.vwapLower[cachedAnalytics.indicators.vwapLower.length - 1] || null,
+                  rsi: cachedAnalytics.indicators.rsiSeries[cachedAnalytics.indicators.rsiSeries.length - 1] || null,
+                  adx: cachedAnalytics.indicators.adxSeries[cachedAnalytics.indicators.adxSeries.length - 1] || null
+                }
+              : null,
+            metrics: cachedAnalytics.metrics,
+            signal: cachedAnalytics.signal,
+            diagnostics: cachedAnalytics.diagnostics,
             workerLive: {
               running: workerState.running,
               equity: liveEquity,
@@ -324,7 +332,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       void pushTick();
       const timer = setInterval(() => {
         void pushTick();
-      }, 2000);
+      }, 650);
 
       req.on('close', () => {
         closed = true;

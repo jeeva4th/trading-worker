@@ -24,7 +24,9 @@ export class BacktestEngine {
     const warmUp = Math.min(60, Math.floor(candles.length / 4));
 
     for (let i = warmUp; i < candles.length; i++) {
-      const slice = candles.slice(0, i + 1);
+      // Bound sliding window to 230 candles for fast O(N) backtesting
+      const startIdx = Math.max(0, i - 229);
+      const slice = candles.slice(startIdx, i + 1);
       const currentCandle = candles[i];
       // ATR array is offset by atrPeriod entries from candle index 0
       const atrIdx = i - atrPeriod;
