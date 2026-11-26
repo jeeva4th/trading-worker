@@ -276,7 +276,9 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           let liveEquity = workerState.equity;
           let liveUnrealized = workerState.unrealizedPnl;
           let liveUnrealizedPct = workerState.unrealizedPnlPercent;
+          let markPrice = workerState.lastPrice || livePrice;
           if (workerState.position && workerState.position.symbol === symbol) {
+            markPrice = livePrice;
             const posVal = workerState.position.amount * livePrice;
             const costBasis = workerState.position.amount * workerState.position.entryPrice;
             liveUnrealized = posVal - costBasis;
@@ -313,9 +315,16 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
             diagnostics: cachedAnalytics.diagnostics,
             workerLive: {
               running: workerState.running,
+              symbol: workerState.symbol,
               equity: liveEquity,
+              cashBalance: workerState.cashBalance,
+              realizedPnl: workerState.realizedPnl,
+              winRate: workerState.winRate,
               unrealizedPnl: liveUnrealized,
-              unrealizedPnlPercent: liveUnrealizedPct
+              unrealizedPnlPercent: liveUnrealizedPct,
+              markPrice,
+              position: workerState.position,
+              tradesCount: workerState.trades.length
             }
           };
 
@@ -514,7 +523,19 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     }
 
     if (url.pathname === '/api/worker/status' && req.method === 'GET') {
-      sendJson(res, 200, paperTrader.getState());
+      const state = paperTrader.getState();
+      if (state.position) {
+        const livePrice = await exchange.fetchFastPrice(state.position.symbol).catch(() => null);
+        if (livePrice !== null) {
+          const posVal = state.position.amount * livePrice;
+          const costBasis = state.position.amount * state.position.entryPrice;
+          state.lastPrice = livePrice;
+          state.unrealizedPnl = posVal - costBasis;
+          state.unrealizedPnlPercent = ((livePrice - state.position.entryPrice) / state.position.entryPrice) * 100;
+          state.equity = state.cashBalance + posVal;
+        }
+      }
+      sendJson(res, 200, state);
       return true;
     }
 

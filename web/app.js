@@ -426,10 +426,15 @@ function applyLiveTick(tick) {
   if (tick.diagnostics) renderSetupDiagnostics(tick.diagnostics);
 
   if (tick.workerLive) {
-    document.getElementById('metric-equity').textContent = `$${tick.workerLive.equity.toFixed(2)}`;
+    const wl = tick.workerLive;
+    document.getElementById('metric-equity').textContent = `$${wl.equity.toFixed(2)}`;
     const unrEl = document.getElementById('metric-unrealized');
-    unrEl.textContent = `Unrealized: ${tick.workerLive.unrealizedPnl >= 0 ? '+' : ''}$${tick.workerLive.unrealizedPnl.toFixed(2)}`;
-    unrEl.className = `kpi-sub mono ${tick.workerLive.unrealizedPnl >= 0 ? 'green' : 'red'}`;
+    unrEl.textContent = `Unrealized: ${wl.unrealizedPnl >= 0 ? '+' : ''}$${wl.unrealizedPnl.toFixed(2)} (${wl.unrealizedPnlPercent >= 0 ? '+' : ''}${wl.unrealizedPnlPercent.toFixed(2)}%)`;
+    unrEl.className = `kpi-sub mono ${wl.unrealizedPnl >= 0 ? 'green' : 'red'}`;
+
+    if (wl.position) {
+      renderPositionCard(wl.position, wl.unrealizedPnl, wl.unrealizedPnlPercent, wl.markPrice);
+    }
   }
 
   document.getElementById('chart-status').textContent = `Tick ${new Date(tick.timestamp).toLocaleTimeString()}`;
@@ -629,6 +634,26 @@ function switchView(viewId) {
   if (viewId === 'tvpro') renderTradingViewProWidget();
 }
 
+function renderPositionCard(position, unrealizedPnl, unrealizedPnlPercent, markPrice) {
+  const posBox = document.getElementById('position-box');
+  if (!posBox) return;
+  if (position) {
+    const pnlSign = unrealizedPnl >= 0 ? '+' : '';
+    const pctSign = unrealizedPnlPercent >= 0 ? '+' : '';
+    const cls = unrealizedPnl >= 0 ? 'green' : 'red';
+    posBox.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+        <strong>LONG ${position.symbol}</strong>
+        <strong class="mono ${cls}">${pnlSign}$${unrealizedPnl.toFixed(2)} (${pctSign}${unrealizedPnlPercent.toFixed(2)}%)</strong>
+      </div>
+      <div class="muted mono">Entry: $${position.entryPrice.toFixed(2)} → Mark: $${Number(markPrice || position.entryPrice).toFixed(2)}</div>
+      <div class="muted mono">Qty: ${position.amount.toFixed(4)} · SL: $${(position.stopLoss || 0).toFixed(2)} · TP: $${(position.takeProfit || 0).toFixed(2)}</div>
+    `;
+  } else {
+    posBox.innerHTML = `<div class="empty-msg">Flat (${state.symbol}) — Ready for setup</div>`;
+  }
+}
+
 function renderWorkerState(w) {
   const badge = document.getElementById('worker-badge');
   badge.textContent = w.running ? 'RUNNING' : 'STOPPED';
@@ -649,24 +674,33 @@ function renderWorkerState(w) {
   realEl.className = realPnl >= 0 ? 'green' : 'red';
 
   document.getElementById('metric-equity').textContent = `$${w.equity.toFixed(2)}`;
-  document.getElementById('metric-winrate').textContent = `WR: ${(w.winRate || 0).toFixed(1)}%`;
+  document.getElementById('metric-winrate').textContent = `WR: ${(w.winRate || 0).toFixed(1)}% (${(w.trades || []).length}t)`;
 
   const unrEl = document.getElementById('metric-unrealized');
-  unrEl.textContent = `Unrealized: ${w.unrealizedPnl >= 0 ? '+' : ''}$${w.unrealizedPnl.toFixed(2)}`;
+  unrEl.textContent = `Unrealized: ${w.unrealizedPnl >= 0 ? '+' : ''}$${w.unrealizedPnl.toFixed(2)} (${(w.unrealizedPnlPercent || 0) >= 0 ? '+' : ''}${(w.unrealizedPnlPercent || 0).toFixed(2)}%)`;
   unrEl.className = `kpi-sub mono ${w.unrealizedPnl >= 0 ? 'green' : 'red'}`;
 
-  const posBox = document.getElementById('position-box');
-  if (w.position) {
-    posBox.innerHTML = `
-      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-        <strong>LONG ${w.position.symbol}</strong>
-        <strong class="mono ${w.unrealizedPnl >= 0 ? 'green' : 'red'}">${w.unrealizedPnlPercent >= 0 ? '+' : ''}${w.unrealizedPnlPercent.toFixed(2)}%</strong>
-      </div>
-      <div class="muted mono">Entry: $${w.position.entryPrice.toFixed(2)} · Qty: ${w.position.amount.toFixed(4)}</div>
-      <div class="muted mono">SL: $${(w.position.stopLoss || 0).toFixed(2)} · TP: $${(w.position.takeProfit || 0).toFixed(2)}</div>
-    `;
-  } else {
-    posBox.innerHTML = `<div class="empty-msg">Flat (${w.symbol}) — Ready for setup</div>`;
+  renderPositionCard(w.position, w.unrealizedPnl, w.unrealizedPnlPercent || 0, w.lastPrice);
+
+  const paperTradesEl = document.getElementById('paper-trades-list');
+  if (paperTradesEl) {
+    const trades = w.trades || [];
+    if (trades.length === 0) {
+      paperTradesEl.innerHTML = '<div class="empty-msg">No closed paper trades yet</div>';
+    } else {
+      paperTradesEl.innerHTML = trades
+        .slice(0, 15)
+        .map(t => `
+          <div class="feed-item ${t.pnl >= 0 ? 'TRADE' : 'ERROR'}">
+            <div style="display:flex;justify-content:space-between;">
+              <strong>LONG $${t.entryPrice.toFixed(2)} → $${t.exitPrice.toFixed(2)}</strong>
+              <strong class="mono ${t.pnl >= 0 ? 'green' : 'red'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)} (${t.pnlPercent >= 0 ? '+' : ''}${t.pnlPercent.toFixed(2)}%)</strong>
+            </div>
+            <div class="muted">${t.exitReason}</div>
+          </div>
+        `)
+        .join('');
+    }
   }
 
   const logsEl = document.getElementById('worker-logs');

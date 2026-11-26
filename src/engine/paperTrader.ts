@@ -330,15 +330,17 @@ export class PaperTrader {
     this.state.symbol = normalizedSymbol;
     this.state.timeframe = timeframe;
 
-    const candles = await this.exchange.fetchCandles(normalizedSymbol, timeframe, 260);
+    const candles = (await this.exchange.fetchFastKlines(normalizedSymbol, timeframe, 260))
+      || (await this.exchange.fetchCandles(normalizedSymbol, timeframe, 260));
     const latest = candles[candles.length - 1];
+    const livePrice = (await this.exchange.fetchFastPrice(normalizedSymbol)) ?? latest.close;
     const atrValues = TechnicalIndicators.getATR(candles, 14);
-    const currentAtr = atrValues.length > 0 ? atrValues[atrValues.length - 1] : latest.close * 0.02;
+    const currentAtr = atrValues.length > 0 ? atrValues[atrValues.length - 1] : livePrice * 0.02;
 
-    const strategy = createStrategy(this.state.strategyId);
+    const strategy = createStrategy(this.state.strategyId, this.state.settings);
     const quantSignal = strategy.analyze(candles);
 
-    this.state.lastPrice = latest.close;
+    this.state.lastPrice = livePrice;
     this.state.lastSignal = quantSignal;
     this.state.lastTickAt = Date.now();
 
@@ -349,7 +351,7 @@ export class PaperTrader {
         this.appendLog('WARN', `${source} BUY ignored: already holding LONG ${normalizedSymbol}.`);
       } else {
         this.openLongPosition(
-          latest.close,
+          livePrice,
           currentAtr,
           quantSignal.stopLoss,
           quantSignal.takeProfit,
@@ -358,21 +360,21 @@ export class PaperTrader {
       }
     } else if (action === 'SELL' || action === 'CLOSE') {
       if (this.state.position) {
-        this.closePosition(latest.close, `${source} ${action} Alert`);
+        this.closePosition(livePrice, `${source} ${action} Alert`);
       } else {
-        this.appendLog('SIGNAL', `${source} ${action} received at $${latest.close.toFixed(2)} (No open position).`);
+        this.appendLog('SIGNAL', `${source} ${action} received at $${livePrice.toFixed(2)} (No open position).`);
       }
     } else {
       // ANALYZE mode: execute if quant strategy explicitly triggers BUY/SELL
-      this.appendLog('SIGNAL', `${source} Analysis on ${normalizedSymbol} @ $${latest.close.toFixed(2)}: ${quantSignal.type} — ${quantSignal.reason}`);
+      this.appendLog('SIGNAL', `${source} Analysis on ${normalizedSymbol} @ $${livePrice.toFixed(2)}: ${quantSignal.type} — ${quantSignal.reason}`);
       if (!this.state.position && quantSignal.type === 'BUY') {
-        this.openLongPosition(latest.close, currentAtr, quantSignal.stopLoss, quantSignal.takeProfit, quantSignal.reason);
+        this.openLongPosition(livePrice, currentAtr, quantSignal.stopLoss, quantSignal.takeProfit, quantSignal.reason);
       } else if (this.state.position && quantSignal.type === 'SELL') {
-        this.closePosition(latest.close, quantSignal.reason);
+        this.closePosition(livePrice, quantSignal.reason);
       }
     }
 
-    this.recomputeEquity(latest.close);
+    this.recomputeEquity(livePrice);
     this.saveState();
     return this.getState();
   }
