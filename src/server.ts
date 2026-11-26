@@ -17,6 +17,7 @@ const WEB_DIR = path.join(process.cwd(), 'web');
 const exchange = new ExchangeConnector('binance');
 const telegramNotifier = new TelegramNotifier();
 const paperTrader = new PaperTrader('binance', path.join(process.cwd(), 'data'), telegramNotifier);
+const liveTickStateCache = new Map<string, { candles: Candle[]; analytics: ReturnType<typeof computeMarketAnalytics>; analyticsAt: number }>();
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -223,6 +224,116 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
         },
         signal: analytics.signal,
         diagnostics: analytics.diagnostics
+      });
+      return true;
+    }
+
+    if (url.pathname === '/api/live-tick' && req.method === 'GET') {
+      const symbol = url.searchParams.get('symbol') || 'XAU/USD';
+      const timeframe = url.searchParams.get('timeframe') || '1h';
+      const strategyId = (url.searchParams.get('strategy') || 'ema_vwap_liquidity') as StrategyId;
+      const settings = parseSettings(Object.fromEntries(url.searchParams.entries()));
+      const cacheKey = `${symbol}:${timeframe}:${strategyId}`;
+
+      const [recentCandles, fastPrice] = await Promise.all([
+        exchange.fetchFastKlines(symbol, timeframe, 2).catch(() => null),
+        exchange.fetchFastPrice(symbol).catch(() => null)
+      ]);
+
+      let entry = liveTickStateCache.get(cacheKey);
+      if (!entry) {
+        const baseCandles = await exchange.fetchCandles(symbol, timeframe, 260);
+        entry = {
+          candles: baseCandles,
+          analytics: computeMarketAnalytics(baseCandles, symbol, timeframe, strategyId, settings),
+          analyticsAt: Date.now()
+        };
+        liveTickStateCache.set(cacheKey, entry);
+      }
+
+      const prevLen = entry.candles.length;
+      if (recentCandles && recentCandles.length > 0) {
+        entry.candles = mergeLatestCandles(entry.candles, recentCandles);
+      }
+      const latest = entry.candles[entry.candles.length - 1];
+      const livePrice = fastPrice ?? latest.close;
+
+      // Keep latest candle close/high/low synced to live ticker price
+      const liveCandle = {
+        time: Math.floor(latest.timestamp / 1000),
+        open: latest.open,
+        high: Math.max(latest.high, livePrice),
+        low: Math.min(latest.low, livePrice),
+        close: livePrice,
+        volume: latest.volume
+      };
+      entry.candles[entry.candles.length - 1] = {
+        ...latest,
+        high: liveCandle.high,
+        low: liveCandle.low,
+        close: livePrice
+      };
+
+      const barRolled = entry.candles.length !== prevLen;
+      const shouldRefreshAnalytics = barRolled || Date.now() - entry.analyticsAt >= 3500;
+      if (shouldRefreshAnalytics) {
+        entry.analytics = computeMarketAnalytics(entry.candles, symbol, timeframe, strategyId, settings);
+        entry.analyticsAt = Date.now();
+      }
+
+      const workerState = paperTrader.getState();
+      let liveEquity = workerState.equity;
+      let liveUnrealized = workerState.unrealizedPnl;
+      let liveUnrealizedPct = workerState.unrealizedPnlPercent;
+      let markPrice = workerState.lastPrice || livePrice;
+      if (workerState.position && workerState.position.symbol === symbol) {
+        markPrice = livePrice;
+        const posVal = workerState.position.amount * livePrice;
+        const costBasis = workerState.position.amount * workerState.position.entryPrice;
+        liveUnrealized = posVal - costBasis;
+        liveUnrealizedPct = ((livePrice - workerState.position.entryPrice) / workerState.position.entryPrice) * 100;
+        liveEquity = workerState.cashBalance + posVal;
+      }
+
+      sendJson(res, 200, {
+        symbol,
+        timeframe,
+        timestamp: Date.now(),
+        candle: liveCandle,
+        ticker: {
+          last: livePrice,
+          high: liveCandle.high,
+          low: liveCandle.low,
+          volume: liveCandle.volume
+        },
+        tail: shouldRefreshAnalytics
+          ? {
+              emaFast: entry.analytics.indicators.emaFast[entry.analytics.indicators.emaFast.length - 1] || null,
+              emaSlow: entry.analytics.indicators.emaSlow[entry.analytics.indicators.emaSlow.length - 1] || null,
+              emaMacro: entry.analytics.indicators.emaMacro[entry.analytics.indicators.emaMacro.length - 1] || null,
+              vwap: entry.analytics.indicators.vwap[entry.analytics.indicators.vwap.length - 1] || null,
+              vwapUpper: entry.analytics.indicators.vwapUpper[entry.analytics.indicators.vwapUpper.length - 1] || null,
+              vwapLower: entry.analytics.indicators.vwapLower[entry.analytics.indicators.vwapLower.length - 1] || null,
+              rsi: entry.analytics.indicators.rsiSeries[entry.analytics.indicators.rsiSeries.length - 1] || null,
+              adx: entry.analytics.indicators.adxSeries[entry.analytics.indicators.adxSeries.length - 1] || null
+            }
+          : null,
+        metrics: entry.analytics.metrics,
+        signal: entry.analytics.signal,
+        diagnostics: entry.analytics.diagnostics,
+        workerLive: {
+          running: workerState.running,
+          symbol: workerState.symbol,
+          equity: liveEquity,
+          cashBalance: workerState.cashBalance,
+          realizedPnl: workerState.realizedPnl,
+          winRate: workerState.winRate,
+          unrealizedPnl: liveUnrealized,
+          unrealizedPnlPercent: liveUnrealizedPct,
+          markPrice,
+          position: workerState.position,
+          tradesCount: workerState.trades.length
+        }
       });
       return true;
     }
@@ -666,7 +777,11 @@ function serveStatic(res: http.ServerResponse, url: URL): void {
       res.end('Not found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache'
+    });
     res.end(content);
   });
 }

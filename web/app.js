@@ -6,10 +6,12 @@ const state = {
   tvWidgetInitializedFor: null,
   streamEnabled: true,
   lastTickPrice: null,
-  lastCandleTimeSec: null
+  lastCandleTimeSec: null,
+  tickSeq: 0
 };
 
-let liveEventSource = null;
+let liveStreamTimer = null;
+let liveTickInFlight = false;
 
 let mainChart = null;
 let candleSeries = null;
@@ -381,29 +383,44 @@ function updateCountdownClock() {
   el.textContent = hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
 }
 
+function safeSeriesUpdate(series, point, minTime) {
+  if (!series || !point || point.time === undefined || point.value === undefined) return;
+  if (minTime && point.time < minTime) return;
+  try {
+    series.update(point);
+  } catch {
+    // Ignore out-of-order candle edge ticks without breaking live UI
+  }
+}
+
 function applyLiveTick(tick) {
   if (!tick || !tick.candle) return;
+  state.tickSeq += 1;
 
   // Update active candle & volume bar live without resetting chart zoom
   if (!state.lastCandleTimeSec || tick.candle.time >= state.lastCandleTimeSec) {
     state.lastCandleTimeSec = tick.candle.time;
-    candleSeries.update(tick.candle);
-    volumeSeries.update({
-      time: tick.candle.time,
-      value: tick.candle.volume,
-      color: tick.candle.close >= tick.candle.open ? 'rgba(16, 185, 129, 0.35)' : 'rgba(244, 63, 94, 0.35)'
-    });
+    try {
+      candleSeries.update(tick.candle);
+      volumeSeries.update({
+        time: tick.candle.time,
+        value: tick.candle.volume,
+        color: tick.candle.close >= tick.candle.open ? 'rgba(16, 185, 129, 0.35)' : 'rgba(244, 63, 94, 0.35)'
+      });
+    } catch {
+      // Ignore chart timestamp collision
+    }
   }
 
-  // Update tail indicators smoothly if timestamp >= series end
-  if (tick.tail?.emaFast && tick.tail.emaFast.time >= tick.candle.time) emaFastSeries.update(tick.tail.emaFast);
-  if (tick.tail?.emaSlow && tick.tail.emaSlow.time >= tick.candle.time) emaSlowSeries.update(tick.tail.emaSlow);
-  if (tick.tail?.emaMacro && tick.tail.emaMacro.time >= tick.candle.time) emaMacroSeries.update(tick.tail.emaMacro);
-  if (tick.tail?.vwap && tick.tail.vwap.time >= tick.candle.time) vwapSeries.update(tick.tail.vwap);
-  if (tick.tail?.vwapUpper && tick.tail.vwapUpper.time >= tick.candle.time) vwapUpperSeries.update(tick.tail.vwapUpper);
-  if (tick.tail?.vwapLower && tick.tail.vwapLower.time >= tick.candle.time) vwapLowerSeries.update(tick.tail.vwapLower);
-  if (tick.tail?.rsi && tick.tail.rsi.time >= tick.candle.time) rsiSeries.update(tick.tail.rsi);
-  if (tick.tail?.adx && tick.tail.adx.time >= tick.candle.time) adxSeries.update(tick.tail.adx);
+  // Update tail indicators safely
+  safeSeriesUpdate(emaFastSeries, tick.tail?.emaFast, tick.candle.time);
+  safeSeriesUpdate(emaSlowSeries, tick.tail?.emaSlow, tick.candle.time);
+  safeSeriesUpdate(emaMacroSeries, tick.tail?.emaMacro, tick.candle.time);
+  safeSeriesUpdate(vwapSeries, tick.tail?.vwap, tick.candle.time);
+  safeSeriesUpdate(vwapUpperSeries, tick.tail?.vwapUpper, tick.candle.time);
+  safeSeriesUpdate(vwapLowerSeries, tick.tail?.vwapLower, tick.candle.time);
+  safeSeriesUpdate(rsiSeries, tick.tail?.rsi, tick.candle.time);
+  safeSeriesUpdate(adxSeries, tick.tail?.adx, tick.candle.time);
 
   // Flash Price Tick
   const priceEl = document.getElementById('metric-price');
@@ -453,13 +470,13 @@ function applyLiveTick(tick) {
     }
   }
 
-  document.getElementById('chart-status').textContent = `Tick ${new Date(tick.timestamp).toLocaleTimeString()}`;
+  document.getElementById('chart-status').textContent = `Tick #${state.tickSeq} · ${new Date(tick.timestamp).toLocaleTimeString()}`;
 }
 
 function stopLiveStream() {
-  if (liveEventSource) {
-    liveEventSource.close();
-    liveEventSource = null;
+  if (liveStreamTimer) {
+    clearInterval(liveStreamTimer);
+    liveStreamTimer = null;
   }
   const pill = document.getElementById('stream-status-pill');
   const btn = document.getElementById('btn-toggle-stream');
@@ -474,19 +491,6 @@ function startLiveStream() {
   stopLiveStream();
   if (!state.streamEnabled) return;
 
-  const s = getSettingsFromUI();
-  const qs = new URLSearchParams({
-    symbol: state.symbol,
-    timeframe: state.timeframe,
-    strategy: state.strategy,
-    fastEma: String(s.fastEmaPeriod),
-    slowEma: String(s.slowEmaPeriod),
-    macroEma: String(s.macroEmaPeriod),
-    lookback: String(s.liquidityLookback),
-    minWick: String(s.minWickRatio),
-    rr: String(s.riskRewardRatio)
-  });
-
   const pill = document.getElementById('stream-status-pill');
   const btn = document.getElementById('btn-toggle-stream');
   if (pill) {
@@ -495,15 +499,35 @@ function startLiveStream() {
   }
   if (btn) btn.textContent = 'Pause';
 
-  liveEventSource = new EventSource(`/api/stream?${qs.toString()}`);
-  liveEventSource.addEventListener('tick', e => {
+  const runTick = async () => {
+    if (!state.streamEnabled || document.hidden || liveTickInFlight) return;
+    liveTickInFlight = true;
     try {
-      const tick = JSON.parse(e.data);
+      const s = getSettingsFromUI();
+      const qs = new URLSearchParams({
+        symbol: state.symbol,
+        timeframe: state.timeframe,
+        strategy: state.strategy,
+        fastEma: String(s.fastEmaPeriod),
+        slowEma: String(s.slowEmaPeriod),
+        macroEma: String(s.macroEmaPeriod),
+        lookback: String(s.liquidityLookback),
+        minWick: String(s.minWickRatio),
+        rr: String(s.riskRewardRatio)
+      });
+      const tick = await fetchJson(`/api/live-tick?${qs.toString()}`);
       applyLiveTick(tick);
     } catch {
-      // Ignore malformed tick
+      // Keep polling across transient hiccups
+    } finally {
+      liveTickInFlight = false;
     }
-  });
+  };
+
+  void runTick();
+  liveStreamTimer = setInterval(() => {
+    void runTick();
+  }, 650);
 }
 
 async function runBacktest() {
