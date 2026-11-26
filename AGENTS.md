@@ -19,7 +19,7 @@
 ## Development Commands
 - Install: `npm install`
 - Build: `npm run build`
-- Live Dashboard: `npm run web` (`http://localhost:4567`)
+- Live Dashboard: `npm run web` (`http://localhost:5555`)
 - Backtest: `npm run backtest XAU/USD 1h`
 - Analyze URL/Ticker: `npm run analyze "OANDA:XAUUSD" 1h`
 - Test: `npm test`
