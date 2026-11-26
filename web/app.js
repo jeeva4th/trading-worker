@@ -231,9 +231,25 @@ function renderSetupDiagnostics(diag) {
   document.getElementById('setup-ssl').textContent = `$${diag.sellSideLiquidity.toLocaleString()}`;
   document.getElementById('setup-vwap').textContent = `$${diag.vwap.toLocaleString()}`;
   document.getElementById('setup-bsl').textContent = `$${diag.buySideLiquidity.toLocaleString()}`;
+  const entryEl = document.getElementById('setup-entry');
+  if (entryEl) entryEl.textContent = `$${diag.suggestedEntry.toLocaleString()}`;
   document.getElementById('setup-sl').textContent = `$${diag.suggestedStopLoss.toLocaleString()}`;
   document.getElementById('setup-tp').textContent = `$${diag.suggestedTakeProfit.toLocaleString()}`;
-  document.getElementById('setup-sweep-type').textContent = diag.sweepType;
+
+  const banner = document.getElementById('great-entry-banner');
+  const qBadge = document.getElementById('setup-quality-badge');
+  const stState = document.getElementById('setup-structure-state');
+  const levelsText = document.getElementById('great-entry-text');
+  if (banner && qBadge && stState && levelsText) {
+    const quality = diag.entryQuality || 'WAIT';
+    qBadge.textContent = diag.isGreatEntry ? `⚡ ${quality}` : quality;
+    qBadge.className = `quality-badge ${quality === 'A+ ENTRY' ? 'aplus' : quality === 'HIGH' ? 'high' : ''}`;
+    stState.textContent = `${diag.structureState || 'RANGING'} · ${diag.sweepType}`;
+    banner.classList.toggle('great', Boolean(diag.isGreatEntry));
+    levelsText.textContent = diag.isGreatEntry
+      ? `GREAT ENTRY @ $${diag.suggestedEntry.toFixed(2)} | SL $${diag.suggestedStopLoss.toFixed(2)} | TP $${diag.suggestedTakeProfit.toFixed(2)}`
+      : `Watching SSL $${diag.sellSideLiquidity.toFixed(2)} & VWAP $${diag.vwap.toFixed(2)} for sweep`;
+  }
 }
 
 function syncAssetPills() {
@@ -908,6 +924,81 @@ function bindEvents() {
     renderWorkerState(res.workerState);
     showToast(`Test SELL alert executed on ${state.symbol}`);
   });
+
+  document.getElementById('btn-send-telegram-setup').addEventListener('click', async () => {
+    const res = await fetchJson('/api/alerts/telegram/send-setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol: state.symbol,
+        timeframe: state.timeframe,
+        strategyId: state.strategy,
+        settings: getSettingsFromUI()
+      })
+    });
+    if (res.sent) {
+      showToast(`📩 Entry/SL/TP sent to Telegram for ${state.symbol}`);
+    } else {
+      showToast(`Telegram not sent: ${res.reason} (Configure in Studio)`);
+    }
+  });
+
+  document.getElementById('btn-save-telegram').addEventListener('click', async () => {
+    try {
+      const cfg = await fetchJson('/api/alerts/telegram/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: document.getElementById('tg-bot-token').value.trim(),
+          chatId: document.getElementById('tg-chat-id').value.trim(),
+          minScore: Number(document.getElementById('tg-min-score').value || 75),
+          cooldownMinutes: Number(document.getElementById('tg-cooldown').value || 15),
+          enabled: document.getElementById('tg-enabled').checked
+        })
+      });
+      renderTelegramConfig(cfg);
+      showToast('Telegram alert settings saved');
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`);
+    }
+  });
+
+  document.getElementById('btn-test-telegram').addEventListener('click', async () => {
+    try {
+      await fetchJson('/api/alerts/telegram/test', { method: 'POST' });
+      showToast('✅ Test message delivered to Telegram!');
+    } catch (err) {
+      showToast(`Telegram test failed: ${err.message}`);
+    }
+  });
+}
+
+function renderTelegramConfig(cfg) {
+  const badge = document.getElementById('tg-status-badge');
+  if (badge) {
+    badge.textContent = cfg.configured && cfg.enabled ? 'ACTIVE' : cfg.configured ? 'PAUSED' : 'NOT SET';
+    badge.className = `status-badge ${cfg.configured && cfg.enabled ? 'running' : ''}`;
+  }
+  const tokenEl = document.getElementById('tg-bot-token');
+  const chatEl = document.getElementById('tg-chat-id');
+  const scoreEl = document.getElementById('tg-min-score');
+  const coolEl = document.getElementById('tg-cooldown');
+  const enEl = document.getElementById('tg-enabled');
+
+  if (tokenEl && cfg.maskedToken) tokenEl.value = cfg.maskedToken;
+  if (chatEl && cfg.chatId) chatEl.value = cfg.chatId;
+  if (scoreEl) scoreEl.value = cfg.minScore;
+  if (coolEl) coolEl.value = cfg.cooldownMinutes;
+  if (enEl) enEl.checked = cfg.enabled;
+}
+
+async function loadTelegramConfig() {
+  try {
+    const cfg = await fetchJson('/api/alerts/telegram/config');
+    renderTelegramConfig(cfg);
+  } catch {
+    // Ignore
+  }
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -933,6 +1024,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Load secondary analytics, MTF matrix, and scanner in background
   void refreshWorkerStatus();
+  void loadTelegramConfig();
   void runBacktest();
   void loadMtfMatrix();
   setTimeout(() => void scanSetups(), 1200);

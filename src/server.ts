@@ -6,6 +6,7 @@ import { ExchangeConnector } from './connectors/exchange';
 import { TechnicalIndicators } from './indicators';
 import { BacktestEngine } from './engine/backtester';
 import { PaperTrader } from './engine/paperTrader';
+import { TelegramNotifier } from './notifications/telegram';
 import { createStrategy, EmaVwapLiquidityStrategy, STRATEGY_CATALOG } from './strategies';
 import { Candle, DEFAULT_STRATEGY_SETTINGS, StrategyId, StrategySettings } from './types';
 import { parseTradingViewInput } from './utils/tradingviewParser';
@@ -14,7 +15,8 @@ const PORT = Number(process.env.PORT || 4567);
 const WEB_DIR = path.join(process.cwd(), 'web');
 
 const exchange = new ExchangeConnector('binance');
-const paperTrader = new PaperTrader('binance');
+const telegramNotifier = new TelegramNotifier();
+const paperTrader = new PaperTrader('binance', path.join(process.cwd(), 'data'), telegramNotifier);
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -519,6 +521,62 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
           drawdown: p.drawdownPercent ?? 0
         }))
       });
+      return true;
+    }
+
+    if (url.pathname === '/api/alerts/telegram/config' && req.method === 'GET') {
+      sendJson(res, 200, telegramNotifier.getPublicConfig());
+      return true;
+    }
+
+    if (url.pathname === '/api/alerts/telegram/config' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const updated = telegramNotifier.configure({
+        enabled: body.enabled,
+        botToken: body.botToken,
+        chatId: body.chatId,
+        minScore: body.minScore,
+        cooldownMinutes: body.cooldownMinutes
+      });
+      sendJson(res, 200, updated);
+      return true;
+    }
+
+    if (url.pathname === '/api/alerts/telegram/test' && req.method === 'POST') {
+      const result = await telegramNotifier.sendTestMessage();
+      sendJson(res, result.ok ? 200 : 400, result);
+      return true;
+    }
+
+    if (url.pathname === '/api/alerts/telegram/send-setup' && req.method === 'POST') {
+      const body = await readJsonBody(req);
+      const symbol = body.symbol || 'XAU/USD';
+      const timeframe = body.timeframe || '1h';
+      const strategyId = (body.strategyId || 'ema_vwap_liquidity') as StrategyId;
+      const settings = parseSettings(body.settings || {});
+
+      const candles = await exchange.fetchCandles(symbol, timeframe, 260);
+      const analytics = computeMarketAnalytics(candles, symbol, timeframe, strategyId, settings);
+      const latest = candles[candles.length - 1];
+      const diag = analytics.diagnostics;
+
+      const sl = analytics.signal.stopLoss ?? diag?.suggestedStopLoss ?? latest.close * 0.99;
+      const tp = analytics.signal.takeProfit ?? diag?.suggestedTakeProfit ?? latest.close * 1.025;
+
+      const resAlert = await telegramNotifier.notifyEntrySetup(
+        {
+          symbol,
+          timeframe,
+          price: latest.close,
+          stopLoss: sl,
+          takeProfit: tp,
+          reason: analytics.signal.reason,
+          candleTimestamp: latest.timestamp,
+          diagnostics: diag
+        },
+        true
+      );
+      sendJson(res, 200, resAlert);
       return true;
     }
 

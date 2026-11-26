@@ -621,6 +621,52 @@ body {
 .green { color: var(--green) !important; }
 .red { color: var(--red) !important; }
 
+.entry-alert-banner {
+  background: rgba(29, 37, 56, 0.7);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.entry-alert-banner.great {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(56, 189, 248, 0.14));
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.15);
+}
+
+.entry-alert-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.quality-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(139, 155, 180, 0.16);
+  color: var(--text-muted);
+}
+
+.quality-badge.aplus {
+  background: rgba(16, 185, 129, 0.25);
+  color: var(--green);
+}
+
+.quality-badge.high {
+  background: rgba(251, 191, 36, 0.22);
+  color: var(--gold);
+}
+
+.entry-alert-levels {
+  font-size: 11px;
+  color: #fff;
+}
+
 .order-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;

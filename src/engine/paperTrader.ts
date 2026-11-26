@@ -5,6 +5,7 @@ import { TechnicalIndicators } from '../indicators';
 import { createStrategy } from '../strategies';
 import { DEFAULT_STRATEGY_SETTINGS, Position, StrategyId, StrategySettings, TradeRecord, TradeSignal } from '../types';
 import { normalizeSymbolPair } from '../utils/tradingviewParser';
+import { TelegramNotifier } from '../notifications/telegram';
 
 export interface WorkerLog {
   timestamp: number;
@@ -46,7 +47,8 @@ export class PaperTrader {
 
   constructor(
     exchangeId = 'binance',
-    stateDir = path.join(process.cwd(), 'data')
+    stateDir = path.join(process.cwd(), 'data'),
+    private notifier?: TelegramNotifier
   ) {
     this.exchange = new ExchangeConnector(exchangeId);
     this.stateFilePath = path.join(stateDir, 'paper_state.json');
@@ -256,6 +258,10 @@ export class PaperTrader {
         'TRADE',
         `OPENED LONG ${this.state.symbol} (${amount.toFixed(4)}) @ $${price.toFixed(2)} | SL: $${sl.toFixed(2)} | TP: $${tp.toFixed(2)} — ${reason || 'Signal'}`
       );
+      void this.notifier?.notifyTradeEvent(
+        `OPENED LONG ${this.state.symbol}`,
+        `📍 Entry: <code>$${price.toFixed(2)}</code>\n🛑 SL: <code>$${sl.toFixed(2)}</code>\n🎯 TP: <code>$${tp.toFixed(2)}</code>\nQty: ${amount.toFixed(4)}\n<i>${reason || 'Signal'}</i>`
+      );
     }
   }
 
@@ -283,6 +289,10 @@ export class PaperTrader {
     this.appendLog(
       'TRADE',
       `CLOSED LONG ${pos.symbol} @ $${exitPrice.toFixed(2)} | PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%) — ${exitReason}`
+    );
+    void this.notifier?.notifyTradeEvent(
+      `CLOSED LONG ${pos.symbol}`,
+      `Exit: <code>$${exitPrice.toFixed(2)}</code>\nPnL: <b>${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)</b>\n<i>${exitReason}</i>`
     );
   }
 
@@ -427,6 +437,23 @@ export class PaperTrader {
         this.appendLog('SIGNAL', `Tick $${latest.close.toFixed(2)}: HOLD — ${signal.reason}`);
       } else if (signal.type === 'SELL' && !this.state.position) {
         this.appendLog('SIGNAL', `Tick $${latest.close.toFixed(2)}: SELL (Flat/No position) — ${signal.reason}`);
+      }
+
+      // Notify user on Telegram when market structure spots an A+ entry point
+      if (this.notifier && (signal.type === 'BUY' || signal.diagnostics?.isGreatEntry)) {
+        const alertRes = await this.notifier.notifyEntrySetup({
+          symbol: this.state.symbol,
+          timeframe: this.state.timeframe,
+          price: latest.close,
+          stopLoss: signal.stopLoss ?? signal.diagnostics?.suggestedStopLoss ?? latest.close - 2 * currentAtr,
+          takeProfit: signal.takeProfit ?? signal.diagnostics?.suggestedTakeProfit ?? latest.close + 4 * currentAtr,
+          reason: signal.reason,
+          candleTimestamp: latest.timestamp,
+          diagnostics: signal.diagnostics
+        });
+        if (alertRes.sent) {
+          this.appendLog('TRADE', `📩 Telegram Entry Alert sent for ${this.state.symbol} @ $${latest.close.toFixed(2)}`);
+        }
       }
 
       this.recomputeEquity(latest.close);

@@ -33,9 +33,20 @@ export const DEFAULT_STRATEGY_SETTINGS: StrategySettings = {
   initialBalance: 10000
 };
 
+export interface TelegramConfig {
+  enabled: boolean;
+  botToken: string;
+  chatId: string;
+  minScore: number;
+  cooldownMinutes: number;
+}
+
 export interface SetupDiagnostics {
   setupName: string;
   score: number;
+  entryQuality: 'A+ ENTRY' | 'HIGH' | 'WATCH' | 'WAIT';
+  isGreatEntry: boolean;
+  structureState: 'BULLISH_BOS' | 'SWEEP_RECLAIM' | 'ACCUMULATION' | 'BEARISH_BOS' | 'RANGING';
   vwap: number;
   vwapUpper: number;
   vwapLower: number;

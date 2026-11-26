@@ -100,9 +100,35 @@ export class EmaVwapLiquidityStrategy implements Strategy {
       buySideLiquidity
     );
 
+    const isBuyTrigger =
+      (bullishLiquiditySweep && (vwapBullishReaction || emaBullishAligned) && currentRsi < 72) ||
+      (score >= 75 && currentRsi < 68);
+
+    const isGreatEntry = isBuyTrigger || score >= 75;
+    const entryQuality: SetupDiagnostics['entryQuality'] = score >= 80 || isBuyTrigger
+      ? 'A+ ENTRY'
+      : score >= 65
+        ? 'HIGH'
+        : score >= 45
+          ? 'WATCH'
+          : 'WAIT';
+
+    const structureState: SetupDiagnostics['structureState'] = bullishLiquiditySweep
+      ? 'SWEEP_RECLAIM'
+      : bearishLiquiditySweep
+        ? 'BEARISH_BOS'
+        : emaBullishAligned && current.close >= currentVwap.vwap
+          ? 'BULLISH_BOS'
+          : vwapBullishReaction
+            ? 'ACCUMULATION'
+            : 'RANGING';
+
     const diagnostics: SetupDiagnostics = {
       setupName: this.name,
       score,
+      entryQuality,
+      isGreatEntry,
+      structureState,
       vwap: Number(currentVwap.vwap.toFixed(4)),
       vwapUpper: Number(currentVwap.upper.toFixed(4)),
       vwapLower: Number(currentVwap.lower.toFixed(4)),
@@ -119,10 +145,7 @@ export class EmaVwapLiquidityStrategy implements Strategy {
     };
 
     // ENTRY TRIGGER: Liquidity Sweep + VWAP Reaction (or high confluence >= 75%) & RSI not exhausted
-    if (
-      (bullishLiquiditySweep && (vwapBullishReaction || emaBullishAligned) && currentRsi < 72) ||
-      (score >= 80 && currentRsi < 68)
-    ) {
+    if (isBuyTrigger) {
       return {
         type: 'BUY',
         price: current.close,
